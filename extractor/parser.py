@@ -1,7 +1,7 @@
 """HTML parsing and URL normalization logic."""
 
 from html.parser import HTMLParser
-from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
+from urllib.parse import urldefrag, urljoin, urlsplit
 
 
 class _AnchorParser(HTMLParser):
@@ -60,7 +60,7 @@ def normalize_link(href: str, base_url: str) -> str | None:
         if not _is_valid_netloc(parsed.netloc):
             return None
 
-        return urlunsplit(parsed)
+        return defragged_url
     except ValueError:
         # Discard syntactically malformed URLs
         return None

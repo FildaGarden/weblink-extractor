@@ -32,7 +32,7 @@ def fetch_page(
     try:
         parsed = urllib.parse.urlsplit(url)
         is_valid = parsed.scheme.lower() in ("http", "https") and bool(parsed.netloc)
-    except Exception:
+    except ValueError:
         is_valid = False
 
     if not is_valid:
@@ -51,7 +51,7 @@ def fetch_page(
             # urllib.request.urlopen automatically follows HTTP redirects (301, 302, 307, 308)
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 final_url = response.geturl()
-                status = getattr(response, "status", response.getcode())
+                status = response.status
 
                 # Non-200 responses (e.g. 201, 203) produce an error record
                 if status != 200:
@@ -85,7 +85,7 @@ def fetch_page(
                 charset = response.headers.get_content_charset() or "utf-8"
                 try:
                     html = raw_bytes.decode(charset, errors="replace")
-                except (LookupError, UnicodeDecodeError):
+                except LookupError:
                     html = raw_bytes.decode("utf-8", errors="replace")
 
                 return FetchResult(

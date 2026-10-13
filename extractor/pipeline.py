@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 import queue
 import threading
+from typing import Any
 
 from extractor.fetcher import fetch_page
 from extractor.models import ExtractionResult, FetchResult, PipelineStats
@@ -23,6 +24,16 @@ def iter_input_urls(input_path: str) -> Iterator[str]:
 def read_input_urls(input_path: str) -> list[str]:
     """Eager helper returning list of URLs from input file."""
     return list(iter_input_urls(input_path))
+
+
+def _put_queue(q: queue.Queue, item: Any, stop_event: threading.Event) -> None:
+    """Put an item into a bounded queue without hanging if stop_event is signaled."""
+    while not stop_event.is_set():
+        try:
+            q.put(item, timeout=0.1)
+            break
+        except queue.Full:
+            continue
 
 
 def _fetch_worker(
@@ -47,12 +58,7 @@ def _fetch_worker(
         except Exception as err:
             result = FetchResult(url=url, final_url=url, error=str(err))
 
-        while not stop_event.is_set():
-            try:
-                page_queue.put(result, timeout=0.1)
-                break
-            except queue.Full:
-                continue
+        _put_queue(page_queue, result, stop_event)
 
 
 def _consumer_loop(
@@ -75,33 +81,25 @@ def _consumer_loop(
             if item is _SENTINEL:
                 break
 
-            if item.error is not None:
-                urls_failed += 1
-                record = ExtractionResult(
-                    url=item.url,
-                    final_url=item.final_url,
-                    status=item.status,
-                    error=item.error,
-                )
-            else:
+            links, error = [], item.error
+            if error is None:
                 try:
                     links = extract_links(item.html or "", item.final_url)
                     urls_ok += 1
                     total_links += len(links)
-                    record = ExtractionResult(
-                        url=item.url,
-                        final_url=item.final_url,
-                        status=item.status,
-                        links=links,
-                    )
-                except Exception as parse_err:
+                except Exception as exc:
+                    error = f"Extraction error: {exc}"
                     urls_failed += 1
-                    record = ExtractionResult(
-                        url=item.url,
-                        final_url=item.final_url,
-                        status=item.status,
-                        error=f"Extraction error: {parse_err}",
-                    )
+            else:
+                urls_failed += 1
+
+            record = ExtractionResult(
+                url=item.url,
+                final_url=item.final_url,
+                status=item.status,
+                links=links,
+                error=error,
+            )
 
             out_file.write(record.to_json() + "\n")
             out_file.flush()
@@ -153,33 +151,18 @@ def run_pipeline(
             for url in iter_input_urls(input_path):
                 if stop_event.is_set():
                     break
-                while not stop_event.is_set():
-                    try:
-                        url_queue.put(url, timeout=0.1)
-                        break
-                    except queue.Full:
-                        continue
+                _put_queue(url_queue, url, stop_event)
         except Exception as err:
             feeder_errors.append(err)
         finally:
             # Signal all workers to stop
             for _ in workers:
-                while not stop_event.is_set():
-                    try:
-                        url_queue.put(_SENTINEL, timeout=0.1)
-                        break
-                    except queue.Full:
-                        continue
+                _put_queue(url_queue, _SENTINEL, stop_event)
             # Wait for all workers to finish putting results
             for w in workers:
                 w.join()
             # Signal consumer to stop
-            while not stop_event.is_set():
-                try:
-                    page_queue.put(_SENTINEL, timeout=0.1)
-                    break
-                except queue.Full:
-                    continue
+            _put_queue(page_queue, _SENTINEL, stop_event)
 
     feeder_thread = threading.Thread(target=_feeder, name="URLFeeder")
     feeder_thread.start()
