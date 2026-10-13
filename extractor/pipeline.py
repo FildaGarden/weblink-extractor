@@ -119,14 +119,7 @@ def run_pipeline(
     queue_size: int = 10,
     retries: int = 0,
 ) -> PipelineStats:
-    """Execute the full web link extraction pipeline and return summary stats.
-
-    Uses a classic Worker Pool architecture:
-    1. Feeder thread streams URLs from file into bounded url_queue (backpressure on file reading).
-    2. Concurrency worker threads pull URLs, fetch pages, and push results to bounded page_queue.
-    3. Consumer (calling thread) parses HTML, streams JSONL records to disk, and tracks statistics.
-    4. Deterministic shutdown via sentinel tokens and stop_event guarantees zero orphan threads.
-    """
+    """Execute the full web link extraction pipeline and return summary stats"""
     url_queue: queue.Queue = queue.Queue(maxsize=queue_size)  # pyright: ignore[reportMissingTypeArgument]
     page_queue: queue.Queue = queue.Queue(maxsize=queue_size)  # pyright: ignore[reportMissingTypeArgument]
     stop_event = threading.Event()

@@ -9,7 +9,7 @@ import urllib.request
 from extractor.models import FetchResult
 
 DEFAULT_USER_AGENT = "WebLinkExtractor/1.0"
-MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent memory exhaustion
+MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB limit
 TRANSIENT_HTTP_STATUSES = {500, 502, 503, 504}
 
 
@@ -26,15 +26,8 @@ def fetch_page(
     retries: int = 0,
     retry_delay: float = 0.5,
 ) -> FetchResult:  # pyright: ignore[reportReturnType]
-    """Fetch a single page and return its HTML or an informative error.
+    """Fetch a single page and return its HTML or an informative error."""
 
-    Requirements addressed:
-    - Every request has a configurable timeout.
-    - Resolves final_url following redirects.
-    - Automatic retries for transient errors only (500/502/503/504, timeouts, connection resets).
-    - Never retries non-transient errors (4xx, 501, 505, DNS NXDOMAIN, SSL errors, invalid URLs).
-    - Captures failures without halting the pipeline.
-    """
     # 1. Validate basic URL format before attempting network I/O (never retried)
     try:
         parsed = urllib.parse.urlsplit(url)

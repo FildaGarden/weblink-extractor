@@ -18,11 +18,7 @@ class FetchResult:
 
 @dataclass(frozen=True)
 class ExtractionResult:
-    """Represents the final structured result for a single input URL.
-
-    Matches the exact JSON schema required by the specification:
-    {"url": "...", "final_url": "...", "status": 200, "links": [...], "error": null}
-    """
+    """Represents the final structured result for a single input URL."""
 
     url: str
     final_url: str

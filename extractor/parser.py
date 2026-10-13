@@ -28,14 +28,6 @@ def _is_valid_netloc(netloc: str) -> bool:
 
 def normalize_link(href: str, base_url: str) -> str | None:
     """Normalize and validate a raw href against the base URL.
-
-    Rules applied:
-    1. Strips leading and trailing whitespace.
-    2. Resolves relative URLs against base_url (final URL after redirects).
-    3. Strips URL fragments (#hash).
-    4. Enforces 'http' or 'https' scheme (rejects mailto:, javascript:, ftp:, etc.).
-    5. Validates host / netloc presence and absence of whitespace.
-
     Returns the clean absolute URL string, or None if the link is invalid or non-HTTP.
     """
     raw = href.strip()
@@ -67,14 +59,7 @@ def normalize_link(href: str, base_url: str) -> str | None:
 
 
 def extract_links(html: str, base_url: str) -> list[str]:
-    """Extract all valid, normalized hyperlinks from HTML.
-
-    - Resolves relative links to absolute URLs based on base_url.
-    - Strips URL fragments.
-    - Keeps only http and https URLs.
-    - Discards invalid/malformed hrefs and non-HTTP protocols.
-    - Removes duplicates within the page while strictly preserving original order.
-    """
+    """Extract all valid, normalized hyperlinks from HTML."""
     if not html:
         return []
 

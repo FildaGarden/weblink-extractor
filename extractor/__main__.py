@@ -1,3 +1,5 @@
+"""Main Entrypoint"""
+
 import sys
 
 from extractor.cli import main

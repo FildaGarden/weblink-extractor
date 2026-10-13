@@ -23,7 +23,7 @@ The program uses a **Producer-Consumer pipeline** based on a classic **Worker Po
 │ Worker Threads (urllib.request)              │
 │ • Pull URLs, follow HTTP redirects           │
 │ • Enforce 10 MB maximum body size cap        │
-│ • Decompress gzip / deflate responses        │
+│ • Decompress gzip responses                  │
 │ • Enforce socket timeout                     │
 │ • Retry transient errors (5xx, resets)       │
 │ • Catch failures (4xx, DNS, non-HTML)        │
@@ -53,21 +53,12 @@ The program uses a **Producer-Consumer pipeline** based on a classic **Worker Po
 ## Requirements & Installation
 
 - **Python**: 3.11 or higher
-- **Dependencies**: None (uses only `urllib`, `html.parser`, `queue`, `threading`, `gzip`, `zlib`, `json`, `argparse`, `dataclasses`, `unittest`).
+- **Dependencies**: None
 
 No virtual environment or `pip install` required. Clone and run directly:
 
 ```bash
 python -m extractor --input sample_urls.txt --output links.jsonl
-```
-
-### Running with Docker (Optional)
-
-Alternatively, build and run via Docker without needing a local Python environment:
-
-```bash
-docker build -t weblink-extractor .
-docker run --rm -v $(pwd):/data weblink-extractor -i sample_urls.txt -o links.jsonl
 ```
 
 ---
@@ -119,7 +110,6 @@ A classic **Worker Pool with bounded queues** was chosen because:
 ### Retries Strategy
 - **Transient failures only**: Retries are restricted to status codes `500, 502, 503, 504`, socket timeouts, and socket connection resets.
 - **Never retried**: Client errors (`4xx`), permanent server errors (`501 Not Implemented`, `505`), DNS resolution errors (`gaierror`), SSL certificate verification errors, and invalid URL formats are never retried.
-- **Worst-case runtime**: Nominal execution time per URL under retries is approximately bounded by `timeout * (retries + 1) + retry_delay * retries` (subject to per-socket timeout semantics as noted in Known Limitations).
 
 ---
 
@@ -151,5 +141,4 @@ python -W error -m unittest discover tests -v
 
 1. **Per-Host Rate Limiting**: Token-bucket rate limiting per domain to prevent overwhelming target hosts.
 2. **Streaming Response Parser**: Parse tokens directly from the incoming socket stream without buffering the entire body into RAM.
-3. **Connection Pooling & HTTP/2**: Integrate `httpx` or `urllib3` with connection reuse (keep-alive) to eliminate repeated TLS handshakes when querying the same host multiple times.
-4. **Advanced Retry Backoff**: Replace fixed 0.5s delay with exponential backoff (`retry_delay * 2**attempt`), randomized jitter, and honoring server `Retry-After` response headers.
+3. **Advanced Retry Backoff**: Replace fixed 0.5s delay with exponential backoff (`retry_delay * 2**attempt`), randomized jitter, and honoring server `Retry-After` response headers.
