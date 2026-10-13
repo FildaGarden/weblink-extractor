@@ -61,6 +61,15 @@ No virtual environment or `pip install` required. Clone and run directly:
 python -m extractor --input sample_urls.txt --output links.jsonl
 ```
 
+### Running with Docker (Optional)
+
+Alternatively, build and run via Docker without needing a local Python environment:
+
+```bash
+docker build -t weblink-extractor .
+docker run --rm -v $(pwd):/data weblink-extractor -i sample_urls.txt -o links.jsonl
+```
+
 ---
 
 ## CLI Options
@@ -110,15 +119,6 @@ A classic **Worker Pool with bounded queues** was chosen because:
 ### Retries Strategy
 - **Transient failures only**: Retries are restricted to status codes `500, 502, 503, 504`, socket timeouts, and socket connection resets.
 - **Never retried**: Client errors (`4xx`), permanent server errors (`501 Not Implemented`, `505`), DNS resolution errors (`gaierror`), SSL certificate verification errors, and invalid URL formats are never retried.
-
----
-
-## Known Limitations
-
-1. **Socket Timeout vs. Deadline**: `urllib`'s `timeout` is a per-socket-operation timeout (connect/read), not an overall deadline. A slow server streaming bytes intermittently could exceed the nominal timeout.
-2. **Body Size Safety Cap**: Responses are capped at 10 MB (`MAX_BODY_BYTES = 10 MB`) both before and after decompression to prevent memory exhaustion and zip bombs.
-3. **HTML `<base href>`**: Relative URLs are resolved against `final_url`. A document containing `<base href="...">` would override this base, which is currently not handled.
-4. **Politeness & robots.txt**: Not implemented within the scope of this single-file pipeline.
 
 ---
 
