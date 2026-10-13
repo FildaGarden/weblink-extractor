@@ -31,6 +31,27 @@ class TestPageFetcher(unittest.TestCase):
         self.assertIsNone(result.error)
 
     @patch("urllib.request.urlopen")
+    def test_fetch_gzip_encoded_content(self, mock_urlopen: MagicMock) -> None:
+        """Gzip compressed HTML response is decompressed transparently."""
+        import gzip
+        compressed = gzip.compress(b"<html><body>Gzipped Content</body></html>")
+
+        mock_response = MagicMock()
+        mock_response.geturl.return_value = "https://example.com/gzip"
+        mock_response.status = 200
+        mock_response.headers.get_content_type.return_value = "text/html"
+        mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.side_effect = lambda key, default=None: "gzip" if key == "Content-Encoding" else default
+        mock_response.read.return_value = compressed
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = fetch_page("https://example.com/gzip")
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(result.html, "<html><body>Gzipped Content</body></html>")
+        self.assertIsNone(result.error)
+
+    @patch("urllib.request.urlopen")
     def test_fetch_http_404(self, mock_urlopen: MagicMock) -> None:
         """HTTP 404 error is caught and produces error 'HTTP 404'."""
         err = urllib.error.HTTPError(

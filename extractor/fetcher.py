@@ -1,9 +1,11 @@
 """HTTP page fetcher with timeout and comprehensive failure handling."""
 
+import gzip
 import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 from extractor.models import FetchResult
 
@@ -76,8 +78,23 @@ def fetch_page(
                     error=f"Non-HTML content ({content_type})",
                 )
 
-            # Read and decode body
+            # Read response body and decompress if encoded (gzip/deflate)
             raw_bytes = response.read()
+            content_encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
+            if content_encoding == "gzip":
+                try:
+                    raw_bytes = gzip.decompress(raw_bytes)
+                except Exception:
+                    pass
+            elif content_encoding == "deflate":
+                try:
+                    raw_bytes = zlib.decompress(raw_bytes)
+                except Exception:
+                    try:
+                        raw_bytes = zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
+                    except Exception:
+                        pass
+
             charset = response.headers.get_content_charset() or "utf-8"
             try:
                 html = raw_bytes.decode(charset, errors="replace")
