@@ -137,6 +137,57 @@ class TestPageFetcher(unittest.TestCase):
             self.assertEqual(result.error, "Invalid URL")
             self.assertIsNone(result.html)
 
+    @patch("urllib.request.urlopen")
+    def test_fetch_retry_transient_failure_success(self, mock_urlopen: MagicMock) -> None:
+        """Transient 500 error is retried and succeeds on second attempt."""
+        err = urllib.error.HTTPError(
+            url="https://example.com/retry",
+            code=500,
+            msg="Internal Server Error",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+        mock_response = MagicMock()
+        mock_response.geturl.return_value = "https://example.com/retry"
+        mock_response.status = 200
+        mock_response.headers.get_content_type.return_value = "text/html"
+        mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.return_value = None
+        mock_response.read.return_value = b"<html><body>Recovered</body></html>"
+
+        # Attempt 1: 500 error; Attempt 2: success context manager
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_response
+        mock_urlopen.side_effect = [err, mock_cm]
+
+        result = fetch_page("https://example.com/retry", retries=1, retry_delay=0.01)
+        err.close()
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(result.html, "<html><body>Recovered</body></html>")
+        self.assertIsNone(result.error)
+        self.assertEqual(mock_urlopen.call_count, 2)
+
+    @patch("urllib.request.urlopen")
+    def test_fetch_no_retry_on_4xx_client_error(self, mock_urlopen: MagicMock) -> None:
+        """HTTP 4xx client errors are never retried even when retries > 0."""
+        err = urllib.error.HTTPError(
+            url="https://example.com/404",
+            code=404,
+            msg="Not Found",
+            hdrs=None,  # type: ignore[arg-type]
+            fp=None,
+        )
+        mock_urlopen.side_effect = err
+
+        result = fetch_page("https://example.com/404", retries=3, retry_delay=0.01)
+        err.close()
+
+        self.assertEqual(result.status, 404)
+        self.assertEqual(result.error, "HTTP 404")
+        # Must only call once - no retries for 4xx!
+        self.assertEqual(mock_urlopen.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

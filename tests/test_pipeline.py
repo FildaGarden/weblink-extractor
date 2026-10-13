@@ -116,7 +116,7 @@ class TestPipelineIntegration(unittest.TestCase):
             input_file.write_text(content, encoding="utf-8")
 
             # Execute pipeline
-            run_pipeline(
+            stats = run_pipeline(
                 input_path=str(input_file),
                 output_path=str(output_file),
                 concurrency=3,
@@ -125,6 +125,10 @@ class TestPipelineIntegration(unittest.TestCase):
             )
 
             self.assertTrue(output_file.exists())
+            self.assertEqual(stats.urls_ok, 2)
+            self.assertEqual(stats.urls_failed, 3)
+            self.assertEqual(stats.total_links, 3)
+            self.assertEqual(stats.summary_line(), "Summary: 2 URLs ok, 3 URLs failed, 3 total links found")
 
             # Read and parse JSONL records
             records = []

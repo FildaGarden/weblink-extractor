@@ -46,3 +46,16 @@ class ExtractionResult:
     def to_json(self) -> str:
         """Serialize result to a single JSON string without extra whitespace."""
         return json.dumps(self.to_dict())
+
+
+@dataclass(frozen=True)
+class PipelineStats:
+    """Execution summary statistics across the whole pipeline run."""
+
+    urls_ok: int = 0
+    urls_failed: int = 0
+    total_links: int = 0
+
+    def summary_line(self) -> str:
+        """Format summary line as requested by specification."""
+        return f"Summary: {self.urls_ok} URLs ok, {self.urls_failed} URLs failed, {self.total_links} total links found"

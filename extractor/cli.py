@@ -54,6 +54,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Maximum bounded queue size between fetcher and parser (default: 10).",
     )
 
+    parser.add_argument(
+        "--retries",
+        "-r",
+        type=int,
+        default=0,
+        help="Maximum retries for transient failures (5xx, timeouts, connection errors; default: 0).",
+    )
+
     parsed = parser.parse_args(args)
 
     if parsed.concurrency < 1:
@@ -64,6 +72,9 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
 
     if parsed.queue_size < 1:
         parser.error("--queue-size must be an integer greater than or equal to 1.")
+
+    if parsed.retries < 0:
+        parser.error("--retries must be an integer greater than or equal to 0.")
 
     return parsed
 
@@ -78,13 +89,15 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        run_pipeline(
+        stats = run_pipeline(
             input_path=str(input_path),
             output_path=args.output,
             concurrency=args.concurrency,
             timeout=args.timeout,
             queue_size=args.queue_size,
+            retries=args.retries,
         )
+        print(stats.summary_line(), file=sys.stderr)
         return 0
     except KeyboardInterrupt:
         print("\nExecution interrupted by user.", file=sys.stderr)
