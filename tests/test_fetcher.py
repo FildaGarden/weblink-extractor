@@ -150,7 +150,7 @@ class TestPageFetcher(unittest.TestCase):
             url="https://example.com/missing",
             code=404,
             msg="Not Found",
-            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+            hdrs=None,
             fp=None,
         )
         mock_urlopen.side_effect = err
@@ -170,7 +170,7 @@ class TestPageFetcher(unittest.TestCase):
             url="https://example.com/error",
             code=500,
             msg="Internal Server Error",
-            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+            hdrs=None,
             fp=None,
         )
         mock_urlopen.side_effect = err
@@ -249,7 +249,7 @@ class TestPageFetcher(unittest.TestCase):
             url="https://example.com/retry",
             code=500,
             msg="Internal Server Error",
-            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+            hdrs=None,
             fp=None,
         )
         mock_response = MagicMock()
@@ -282,7 +282,7 @@ class TestPageFetcher(unittest.TestCase):
             url="https://example.com/501",
             code=501,
             msg="Not Implemented",
-            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+            hdrs=None,
             fp=None,
         )
         mock_urlopen.side_effect = err

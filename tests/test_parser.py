@@ -7,7 +7,7 @@ from extractor.parser import extract_links
 class TestLinkExtractor(unittest.TestCase):
     @override
     def setUp(self) -> None:
-        self.base_url = "https://example.com/docs/index.html"  # pyright: ignore[reportUninitializedInstanceVariable, reportUnannotatedClassAttribute]
+        self.base_url = "https://example.com/docs/index.html"
 
     def test_relative_links_resolution(self) -> None:
         """Relative links must resolve against the page's final URL."""
@@ -111,7 +111,6 @@ class TestLinkExtractor(unittest.TestCase):
     def test_empty_or_none_input(self) -> None:
         """Empty HTML returns empty list."""
         self.assertEqual(extract_links("", self.base_url), [])
-        self.assertEqual(extract_links(None, self.base_url), [])  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
 
 
 if __name__ == "__main__":

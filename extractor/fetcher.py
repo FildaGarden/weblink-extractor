@@ -25,7 +25,7 @@ def fetch_page(
     user_agent: str = DEFAULT_USER_AGENT,
     retries: int = 0,
     retry_delay: float = 0.5,
-) -> FetchResult:  # pyright: ignore[reportReturnType]
+) -> FetchResult:
     """Fetch a single page and return its HTML or an informative error."""
 
     # 1. Validate basic URL format before attempting network I/O (never retried)
@@ -183,3 +183,9 @@ def fetch_page(
                 final_url=url,
                 error=err_msg,
             )
+
+    return FetchResult(
+        url=url,
+        final_url=url,
+        error="Request failed",
+    )

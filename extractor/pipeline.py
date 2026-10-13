@@ -26,7 +26,7 @@ def read_input_urls(input_path: str) -> list[str]:
     return list(iter_input_urls(input_path))
 
 
-def _put_queue(q: queue.Queue, item: Any, stop_event: threading.Event) -> None:  # pyright: ignore[reportMissingTypeArgument]
+def _put_queue(q: queue.Queue, item: Any, stop_event: threading.Event) -> None:
     """Put an item into a bounded queue without hanging if stop_event is signaled."""
     while not stop_event.is_set():
         try:
@@ -37,8 +37,8 @@ def _put_queue(q: queue.Queue, item: Any, stop_event: threading.Event) -> None: 
 
 
 def _fetch_worker(
-    url_queue: queue.Queue,  # pyright: ignore[reportMissingTypeArgument]
-    page_queue: queue.Queue,  # pyright: ignore[reportMissingTypeArgument]
+    url_queue: queue.Queue,
+    page_queue: queue.Queue,
     timeout: float,
     retries: int,
     stop_event: threading.Event,
@@ -63,7 +63,7 @@ def _fetch_worker(
 
 def _consumer_loop(
     output_path: str,
-    page_queue: queue.Queue,  # pyright: ignore[reportMissingTypeArgument]
+    page_queue: queue.Queue,
     stop_event: threading.Event,
 ) -> PipelineStats:
     """Consumer loop: reads fetched pages from page_queue, parses links, and writes JSONL."""
@@ -120,8 +120,8 @@ def run_pipeline(
     retries: int = 0,
 ) -> PipelineStats:
     """Execute the full web link extraction pipeline and return summary stats"""
-    url_queue: queue.Queue = queue.Queue(maxsize=queue_size)  # pyright: ignore[reportMissingTypeArgument]
-    page_queue: queue.Queue = queue.Queue(maxsize=queue_size)  # pyright: ignore[reportMissingTypeArgument]
+    url_queue: queue.Queue = queue.Queue(maxsize=queue_size)
+    page_queue: queue.Queue = queue.Queue(maxsize=queue_size)
     stop_event = threading.Event()
 
     # 1. Start worker threads
