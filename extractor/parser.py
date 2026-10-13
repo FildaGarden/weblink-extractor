@@ -21,6 +21,7 @@ class _AnchorParser(HTMLParser):
             for attr_name, attr_value in attrs:
                 if attr_name.lower() == "href" and attr_value is not None:
                     self.hrefs.append(attr_value)
+                    break
 
 
 def _is_valid_netloc(netloc: str) -> bool:
@@ -65,11 +66,11 @@ def normalize_link(href: str, base_url: str) -> str | None:
         if not _is_valid_netloc(parsed.netloc):
             return None
 
-        # Normalize scheme to lowercase
-        normalized = parsed._replace(scheme=scheme)
-        return urlunsplit(normalized)
-    except Exception:
-        # Any parse error results in discarding the malformed link
+        if parsed.scheme != scheme:
+            parsed = parsed._replace(scheme=scheme)
+        return urlunsplit(parsed)
+    except (ValueError, AttributeError):
+        # Discard syntactically malformed URLs
         return None
 
 

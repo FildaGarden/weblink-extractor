@@ -7,10 +7,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class FetchResult:
-    """Represents the raw response or error from attempting to fetch a URL.
-
-    Analogous to a DTO or Go struct holding the HTTP response metadata.
-    """
+    """Represents the raw response or error from attempting to fetch a URL."""
 
     url: str
     final_url: str

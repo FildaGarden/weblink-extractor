@@ -213,7 +213,6 @@ class TestPipelineIntegration(unittest.TestCase):
             input_file = Path(tmpdir) / "input.txt"
             # Point to a directory as output path to cause an OSError in open(output_path, "w")
             invalid_output_path = tmpdir
-
             input_file.write_text(f"{self.base_url}/page1\n{self.base_url}/target\n")
 
             with self.assertRaises(OSError):
@@ -224,6 +223,43 @@ class TestPipelineIntegration(unittest.TestCase):
                     timeout=5.0,
                     queue_size=1,
                 )
+
+    def test_corrupt_page_does_not_abort_pipeline(self) -> None:
+        """A failure parsing one page produces an error record and the run carries on."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = Path(tmpdir) / "input.txt"
+            output_file = Path(tmpdir) / "output.jsonl"
+
+            input_file.write_text(f"{self.base_url}/page1\n{self.base_url}/target\n")
+
+            real_extract_links = __import__("extractor.parser", fromlist=["extract_links"]).extract_links
+
+            def mock_extract(html: str, base: str) -> list[str]:
+                if "page1" in base:
+                    raise RuntimeError("Simulated parser crash on bad HTML")
+                return real_extract_links(html, base)
+
+            with patch("extractor.pipeline.extract_links", side_effect=mock_extract):
+                stats = run_pipeline(
+                    input_path=str(input_file),
+                    output_path=str(output_file),
+                    concurrency=1,
+                    timeout=5.0,
+                    queue_size=2,
+                )
+
+            self.assertEqual(stats.urls_ok, 1)
+            self.assertEqual(stats.urls_failed, 1)
+
+            with open(output_file, "r", encoding="utf-8") as f:
+                records = [json.loads(line) for line in f if line.strip()]
+
+            self.assertEqual(len(records), 2)
+            by_url = {r["url"]: r for r in records}
+            self.assertIn("Extraction error", by_url[f"{self.base_url}/page1"]["error"] or "")
+            self.assertIsNone(by_url[f"{self.base_url}/target"]["error"])
 
 
 if __name__ == "__main__":

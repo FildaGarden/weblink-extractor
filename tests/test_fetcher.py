@@ -169,24 +169,59 @@ class TestPageFetcher(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 2)
 
     @patch("urllib.request.urlopen")
-    def test_fetch_no_retry_on_4xx_client_error(self, mock_urlopen: MagicMock) -> None:
-        """HTTP 4xx client errors are never retried even when retries > 0."""
+    def test_fetch_no_retry_on_501_not_implemented(self, mock_urlopen: MagicMock) -> None:
+        """HTTP 501 Not Implemented is a permanent error and must not be retried."""
         err = urllib.error.HTTPError(
-            url="https://example.com/404",
-            code=404,
-            msg="Not Found",
+            url="https://example.com/501",
+            code=501,
+            msg="Not Implemented",
             hdrs=None,  # type: ignore[arg-type]
             fp=None,
         )
         mock_urlopen.side_effect = err
 
-        result = fetch_page("https://example.com/404", retries=3, retry_delay=0.01)
+        result = fetch_page("https://example.com/501", retries=3, retry_delay=0.01)
         err.close()
 
-        self.assertEqual(result.status, 404)
-        self.assertEqual(result.error, "HTTP 404")
-        # Must only call once - no retries for 4xx!
+        self.assertEqual(result.status, 501)
+        self.assertEqual(result.error, "HTTP 501")
         self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_fetch_no_retry_on_dns_nxdomain(self, mock_urlopen: MagicMock) -> None:
+        """DNS resolution failures are permanent and must not be retried."""
+        gaierr = socket.gaierror(-2, "Name or service not known")
+        mock_urlopen.side_effect = urllib.error.URLError(gaierr)
+
+        result = fetch_page("https://this-domain-does-not-exist.invalid", retries=3, retry_delay=0.01)
+
+        self.assertIsNone(result.status)
+        self.assertIn("Connection failed", result.error or "")
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_fetch_max_body_size_exceeded(self, mock_urlopen: MagicMock) -> None:
+        """Responses exceeding the 10 MB safety cap return an informative error."""
+        from extractor.fetcher import MAX_BODY_BYTES
+
+        mock_response = MagicMock()
+        mock_response.geturl.return_value = "https://example.com/huge"
+        mock_response.status = 200
+        mock_response.headers.get_content_type.return_value = "text/html"
+        mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.return_value = None
+        # Return 1 byte more than MAX_BODY_BYTES
+        mock_response.read.return_value = b"x" * (MAX_BODY_BYTES + 1)
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_cm
+
+        result = fetch_page("https://example.com/huge")
+
+        self.assertEqual(result.status, 200)
+        self.assertIsNone(result.html)
+        self.assertIn("maximum allowed size", result.error or "")
 
 
 if __name__ == "__main__":
