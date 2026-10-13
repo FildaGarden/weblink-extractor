@@ -1,0 +1,17 @@
+# Challenge specification PDF (strictly excluded from git history)
+*.pdf
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Output and test files
+*.jsonl
+urls.txt

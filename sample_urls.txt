@@ -1,0 +1,10 @@
+# real pages
+https://example.com
+https://www.python.org
+https://www.python.org
+# failures your program should survive
+https://httpbin.org/status/404
+https://httpbin.org/delay/15
+https://httpbin.org/image/png
+https://this-domain-does-not-exist.invalid
+not a url
