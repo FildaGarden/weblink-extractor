@@ -203,6 +203,24 @@ class TestPipelineIntegration(unittest.TestCase):
             record = json.loads(lines[0])
             self.assertEqual(record["url"], f"{self.base_url}/page1")
 
+    def test_consumer_failure_unblocks_producer_cleanly(self) -> None:
+        """If consumer raises an exception, producer workers must unblock and join without hanging."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = Path(tmpdir) / "input.txt"
+            # Point to a directory as output path to cause an OSError in open(output_path, "w")
+            invalid_output_path = tmpdir
+
+            input_file.write_text(f"{self.base_url}/page1\n{self.base_url}/target\n")
+
+            with self.assertRaises(OSError):
+                run_pipeline(
+                    input_path=str(input_file),
+                    output_path=invalid_output_path,
+                    concurrency=2,
+                    timeout=5.0,
+                    queue_size=1,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

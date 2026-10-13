@@ -33,14 +33,21 @@ def _producer_worker(
     timeout: float,
     page_queue: queue.Queue,
     semaphore: threading.Semaphore,
+    stop_event: threading.Event,
 ) -> None:
     """Worker task executed in ThreadPoolExecutor for a single URL fetch."""
     try:
+        if stop_event.is_set():
+            return
         result = fetch_page(url, timeout=timeout)
-        # Blocks if page_queue is full (backpressure applied to worker)
-        page_queue.put(result)
+        # Put with timeout in loop to allow clean unblocking if consumer fails
+        while not stop_event.is_set():
+            try:
+                page_queue.put(result, timeout=0.2)
+                break
+            except queue.Full:
+                continue
     except Exception as err:
-        # Ultimate safeguard against any unhandled worker error
         fallback_result = FetchResult(
             url=url,
             final_url=url,
@@ -48,9 +55,13 @@ def _producer_worker(
             html=None,
             error=str(err),
         )
-        page_queue.put(fallback_result)
+        while not stop_event.is_set():
+            try:
+                page_queue.put(fallback_result, timeout=0.2)
+                break
+            except queue.Full:
+                continue
     finally:
-        # Release concurrency semaphore slot only after enqueuing result
         semaphore.release()
 
 
@@ -59,20 +70,34 @@ def _producer_thread_target(
     concurrency: int,
     timeout: float,
     page_queue: queue.Queue,
+    stop_event: threading.Event,
 ) -> None:
     """Producer coordination thread: submits fetches with concurrency limit.
 
-    Guarantees sentinel enqueuing in finally block to ensure consumer shutdown.
+    Guarantees sentinel enqueuing in finally block to ensure consumer shutdown,
+    and responds promptly to stop_event if consumer terminates unexpectedly.
     """
     semaphore = threading.Semaphore(concurrency)
     try:
         with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="Fetcher") as executor:
             for url in urls:
-                semaphore.acquire()
-                executor.submit(_producer_worker, url, timeout, page_queue, semaphore)
+                if stop_event.is_set():
+                    break
+                # Acquire with timeout to observe stop_event promptly
+                while not stop_event.is_set():
+                    if semaphore.acquire(timeout=0.2):
+                        executor.submit(
+                            _producer_worker,
+                            url,
+                            timeout,
+                            page_queue,
+                            semaphore,
+                            stop_event,
+                        )
+                        break
     finally:
-        # Enqueue sentinel signaling that all fetches are complete
-        page_queue.put(_SENTINEL)
+        if not stop_event.is_set():
+            page_queue.put(_SENTINEL)
 
 
 def _consumer_loop(output_path: str, page_queue: queue.Queue) -> None:
@@ -134,17 +159,23 @@ def run_pipeline(
 
     # Bounded queue between producer and consumer
     page_queue: queue.Queue = queue.Queue(maxsize=queue_size)
+    stop_event = threading.Event()
 
     # Start producer in a separate background thread
     producer_thread = threading.Thread(
         target=_producer_thread_target,
-        args=(urls, concurrency, timeout, page_queue),
+        args=(urls, concurrency, timeout, page_queue, stop_event),
         name="ProducerCoordinator",
     )
     producer_thread.start()
 
-    # Consumer processes pages in the calling thread
-    _consumer_loop(output_path, page_queue)
-
-    # Ensure producer thread is fully terminated before returning
-    producer_thread.join()
+    try:
+        # Consumer processes pages in the calling thread
+        _consumer_loop(output_path, page_queue)
+    except Exception:
+        stop_event.set()
+        raise
+    finally:
+        stop_event.set()
+        # Ensure producer thread is fully terminated before returning
+        producer_thread.join()
