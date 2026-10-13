@@ -31,6 +31,73 @@ class TestPageFetcher(unittest.TestCase):
         self.assertIsNone(result.error)
 
     @patch("urllib.request.urlopen")
+    def test_fetch_gzip_encoded_content(self, mock_urlopen: MagicMock) -> None:
+        """Gzip compressed HTML response is decompressed transparently."""
+        import gzip
+
+        compressed = gzip.compress(b"<html><body>Gzipped Content</body></html>")
+
+        mock_response = MagicMock()
+        mock_response.geturl.return_value = "https://example.com/gzip"
+        mock_response.status = 200
+        mock_response.headers.get_content_type.return_value = "text/html"
+        mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.side_effect = lambda key, default=None: "gzip" if key == "Content-Encoding" else default
+        mock_response.read.return_value = compressed
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = fetch_page("https://example.com/gzip")
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(result.html, "<html><body>Gzipped Content</body></html>")
+        self.assertIsNone(result.error)
+
+    @patch("urllib.request.urlopen")
+    def test_fetch_deflate_encoded_content(self, mock_urlopen: MagicMock) -> None:
+        """Deflate compressed HTML response is decompressed transparently."""
+        import zlib
+
+        compressed = zlib.compress(b"<html><body>Deflated Content</body></html>")
+
+        mock_response = MagicMock()
+        mock_response.geturl.return_value = "https://example.com/deflate"
+        mock_response.status = 200
+        mock_response.headers.get_content_type.return_value = "text/html"
+        mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.side_effect = lambda key, default=None: "deflate" if key == "Content-Encoding" else default
+        mock_response.read.return_value = compressed
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = fetch_page("https://example.com/deflate")
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(result.html, "<html><body>Deflated Content</body></html>")
+        self.assertIsNone(result.error)
+
+    @patch("urllib.request.urlopen")
+    def test_fetch_decompression_bomb_blocked(self, mock_urlopen: MagicMock) -> None:
+        """Decompression bomb is caught by size check without exhausting memory."""
+        import zlib
+
+        repetitive = b"A" * (10 * 1024 * 1024 + 100)
+        compressed = zlib.compress(repetitive)
+
+        mock_response = MagicMock()
+        mock_response.geturl.return_value = "https://example.com/bomb"
+        mock_response.status = 200
+        mock_response.headers.get_content_type.return_value = "text/html"
+        mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.side_effect = lambda key, default=None: "deflate" if key == "Content-Encoding" else default
+        mock_response.read.return_value = compressed
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = fetch_page("https://example.com/bomb")
+
+        self.assertEqual(result.status, 200)
+        self.assertIsNone(result.html)
+        self.assertIn("exceeded maximum allowed size", result.error or "")
+
+    @patch("urllib.request.urlopen")
     def test_fetch_non_200_2xx_status(self, mock_urlopen: MagicMock) -> None:
         """Non-200 2xx responses (e.g. 203) produce an error record."""
         mock_response = MagicMock()

@@ -1,15 +1,31 @@
 """HTTP page fetcher with timeout, maximum body size limit, and transient failure retries."""
 
+import gzip
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 
 from extractor.models import FetchResult
 
 DEFAULT_USER_AGENT = "WebLinkExtractor/1.0"
 MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent memory exhaustion
 TRANSIENT_HTTP_STATUSES = {500, 502, 503, 504}
+
+
+def _decompress_body(raw_bytes: bytes, encoding: str) -> bytes:
+    """Decompress gzip or deflate response payload."""
+    encoding = encoding.strip().lower()
+    if encoding == "gzip" or raw_bytes.startswith(b"\x1f\x8b"):
+        return gzip.decompress(raw_bytes)
+    elif encoding == "deflate":
+        try:
+            return zlib.decompress(raw_bytes)
+        except zlib.error:
+            # Fall back to raw deflate (-MAX_WBITS) for servers omitting zlib header
+            return zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
+    return raw_bytes
 
 
 def fetch_page(
@@ -38,11 +54,12 @@ def fetch_page(
     if not is_valid:
         return FetchResult(url=url, final_url=url, error="Invalid URL")
 
-    # 2. Build HTTP request with specified User-Agent
+    # 2. Build HTTP request with specified User-Agent and Accept-Encoding
     req = urllib.request.Request(
         url,
         headers={
             "User-Agent": user_agent,
+            "Accept-Encoding": "gzip, deflate",
         },
     )
 
@@ -74,6 +91,28 @@ def fetch_page(
 
                 # Read response body and enforce maximum size cap (10 MB)
                 raw_bytes = response.read(MAX_BODY_BYTES + 1)
+                if len(raw_bytes) > MAX_BODY_BYTES:
+                    return FetchResult(
+                        url=url,
+                        final_url=final_url,
+                        status=status,
+                        error="Response exceeded maximum allowed size (10 MB)",
+                    )
+
+                # Decompress if encoded (gzip/deflate)
+                content_encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
+                if content_encoding in ("gzip", "deflate") or raw_bytes.startswith(b"\x1f\x8b"):
+                    try:
+                        raw_bytes = _decompress_body(raw_bytes, content_encoding)
+                    except Exception as decomp_err:
+                        return FetchResult(
+                            url=url,
+                            final_url=final_url,
+                            status=status,
+                            error=f"Decompression error: {decomp_err}",
+                        )
+
+                # Check maximum allowed size limit after decompression
                 if len(raw_bytes) > MAX_BODY_BYTES:
                     return FetchResult(
                         url=url,

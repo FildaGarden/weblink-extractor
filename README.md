@@ -23,6 +23,7 @@ The program uses a **Producer-Consumer pipeline** based on a classic **Worker Po
 │ Worker Threads (urllib.request)              │
 │ • Pull URLs, follow HTTP redirects           │
 │ • Enforce 10 MB maximum body size cap        │
+│ • Decompress gzip / deflate responses        │
 │ • Enforce socket timeout                     │
 │ • Retry transient errors (5xx, resets)       │
 │ • Catch failures (4xx, DNS, non-HTML)        │
@@ -52,7 +53,7 @@ The program uses a **Producer-Consumer pipeline** based on a classic **Worker Po
 ## Requirements & Installation
 
 - **Python**: 3.11 or higher
-- **Dependencies**: None (uses only `urllib`, `html.parser`, `queue`, `threading`, `json`, `argparse`, `dataclasses`, `unittest`).
+- **Dependencies**: None (uses only `urllib`, `html.parser`, `queue`, `threading`, `gzip`, `zlib`, `json`, `argparse`, `dataclasses`, `unittest`).
 
 No virtual environment or `pip install` required. Clone and run directly:
 
@@ -116,7 +117,7 @@ A classic **Worker Pool with bounded queues** was chosen because:
 ## Known Limitations
 
 1. **Socket Timeout vs. Deadline**: `urllib`'s `timeout` is a per-socket-operation timeout (connect/read), not an overall deadline. A slow server streaming bytes intermittently could exceed the nominal timeout.
-2. **Body Size Safety Cap**: Responses are capped at 10 MB (`MAX_BODY_BYTES = 10 MB`) before parsing to prevent excessive memory usage. Files exceeding 10 MB produce an explicit error record.
+2. **Body Size Safety Cap**: Responses are capped at 10 MB (`MAX_BODY_BYTES = 10 MB`) both before and after decompression to prevent memory exhaustion and zip bombs.
 3. **HTML `<base href>`**: Relative URLs are resolved against `final_url`. A document containing `<base href="...">` would override this base, which is currently not handled.
 4. **Politeness & robots.txt**: Not implemented within the scope of this single-file pipeline.
 
@@ -130,17 +131,16 @@ Run the test suite offline with zero network access:
 python -W error -m unittest discover tests -v
 ```
 
-### Coverage (28 tests)
+### Coverage (31 tests)
 - **`tests/test_parser.py` (7 tests)**: Relative link resolution, fragment stripping, protocol filtering (`mailto:`, `javascript:`), malformed hrefs, in-page duplicate removal, unclosed HTML tags, empty input.
-- **`tests/test_fetcher.py` (14 tests)**: 200 OK, non-200 2xx status (e.g. 203), HTTP 404, HTTP 500, native & socket timeouts, connection/DNS failure, non-HTML MIME types, 10 MB size limit, retries on transient 5xx and connection resets during read, no retries on 4xx, no retries on permanent 501, no retries on DNS NXDOMAIN.
+- **`tests/test_fetcher.py` (17 tests)**: 200 OK, transparent gzip decompression, transparent deflate decompression, decompression bomb safety size check, non-200 2xx status (e.g. 203), HTTP 404, HTTP 500, native & socket timeouts, connection/DNS failure, non-HTML MIME types, 10 MB size limit, retries on transient 5xx and connection resets during read, no retries on 4xx, no retries on permanent 501, no retries on DNS NXDOMAIN.
 - **`tests/test_pipeline.py` (7 tests)**: End-to-end integration against a local loopback `http.server.HTTPServer` with redirects, 404s, binary content, invalid URLs, file overwrite behavior, summary stats, non-UTF8 input resilience, corrupt page isolation, consumer disk write error propagation, and consumer failure deadlock protection.
 
 ---
 
 ## What I Would Do With More Time
 
-1. **Content Compression**: Add support for `Accept-Encoding: gzip, deflate` with streaming decompression to reduce network transfer bandwidth.
-2. **Per-Host Rate Limiting**: Token-bucket rate limiting per domain to prevent overwhelming target hosts.
-3. **Streaming Response Parser**: Parse tokens directly from the incoming socket stream without buffering the entire body into RAM.
-4. **Connection Pooling & HTTP/2**: Integrate `httpx` or `urllib3` with connection reuse (keep-alive) to eliminate repeated TLS handshakes when querying the same host multiple times.
-5. **Advanced Retry Backoff**: Replace fixed 0.5s delay with exponential backoff (`retry_delay * 2**attempt`), randomized jitter, and honoring server `Retry-After` response headers.
+1. **Per-Host Rate Limiting**: Token-bucket rate limiting per domain to prevent overwhelming target hosts.
+2. **Streaming Response Parser**: Parse tokens directly from the incoming socket stream without buffering the entire body into RAM.
+3. **Connection Pooling & HTTP/2**: Integrate `httpx` or `urllib3` with connection reuse (keep-alive) to eliminate repeated TLS handshakes when querying the same host multiple times.
+4. **Advanced Retry Backoff**: Replace fixed 0.5s delay with exponential backoff (`retry_delay * 2**attempt`), randomized jitter, and honoring server `Retry-After` response headers.
