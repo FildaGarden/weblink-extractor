@@ -15,15 +15,12 @@ TRANSIENT_HTTP_STATUSES = {500, 502, 503, 504}
 
 
 def _decompress_body(raw_bytes: bytes, encoding: str) -> bytes:
-    """Decompress gzip or deflate response payload."""
-    encoding = encoding.strip().lower()
     if encoding == "gzip" or raw_bytes.startswith(b"\x1f\x8b"):
         return gzip.decompress(raw_bytes)
-    elif encoding == "deflate":
+    if encoding == "deflate":
         try:
             return zlib.decompress(raw_bytes)
         except zlib.error:
-            # Fall back to raw deflate (-MAX_WBITS) for servers omitting zlib header
             return zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
     return raw_bytes
 
@@ -48,6 +45,7 @@ def fetch_page(
     try:
         parsed = urllib.parse.urlsplit(url)
         is_valid = parsed.scheme.lower() in ("http", "https") and bool(parsed.netloc)
+
     except ValueError:
         is_valid = False
 
@@ -100,10 +98,12 @@ def fetch_page(
                     )
 
                 # Decompress if encoded (gzip/deflate)
-                content_encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
-                if content_encoding in ("gzip", "deflate") or raw_bytes.startswith(b"\x1f\x8b"):
+                raw_encoding = response.headers.get("Content-Encoding")
+                encoding = raw_encoding.strip().lower() if isinstance(raw_encoding, str) else ""
+
+                if encoding in ("gzip", "deflate") or raw_bytes.startswith(b"\x1f\x8b"):
                     try:
-                        raw_bytes = _decompress_body(raw_bytes, content_encoding)
+                        raw_bytes = _decompress_body(raw_bytes, encoding)
                     except Exception as decomp_err:
                         return FetchResult(
                             url=url,
@@ -111,6 +111,13 @@ def fetch_page(
                             status=status,
                             error=f"Decompression error: {decomp_err}",
                         )
+                elif encoding not in ("", "identity"):
+                    return FetchResult(
+                        url=url,
+                        final_url=final_url,
+                        status=status,
+                        error=f"Unsupported Content-Encoding ({encoding})",
+                    )
 
                 # Check maximum allowed size limit after decompression
                 if len(raw_bytes) > MAX_BODY_BYTES:
@@ -156,7 +163,11 @@ def fetch_page(
             if attempt < retries:
                 time.sleep(retry_delay)
                 continue
-            error_msg = "Request timed out" if isinstance(err, TimeoutError) else f"Connection error: {err}"
+            error_msg = (
+                "Request timed out"
+                if isinstance(err, TimeoutError)
+                else f"Connection error: {err}"
+            )
             return FetchResult(
                 url=url,
                 final_url=url,
@@ -172,7 +183,11 @@ def fetch_page(
                 time.sleep(retry_delay)
                 continue
 
-            error_msg = "Request timed out" if is_timeout else f"Connection failed: {err.reason}"
+            error_msg = (
+                "Request timed out"
+                if is_timeout
+                else f"Connection failed: {err.reason}"
+            )
             return FetchResult(
                 url=url,
                 final_url=url,

@@ -1,8 +1,8 @@
 """Command-line interface argument parsing and application entry point."""
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from extractor.pipeline import run_pipeline
 
@@ -85,7 +85,10 @@ def main(argv: list[str] | None = None) -> int:
 
     input_path = Path(args.input)
     if not input_path.is_file():
-        print(f"Error: Input file '{args.input}' does not exist or is not a file.", file=sys.stderr)
+        print(
+            f"Error: Input file '{args.input}' does not exist or is not a file.",
+            file=sys.stderr,
+        )
         return 1
 
     try:

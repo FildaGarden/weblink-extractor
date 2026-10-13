@@ -1,7 +1,7 @@
 """Data models representing fetch operations and extracted link results."""
 
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
 
