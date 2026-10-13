@@ -53,16 +53,13 @@ def normalize_link(href: str, base_url: str) -> str | None:
         parsed = urlsplit(defragged_url)
 
         # Enforce scheme
-        scheme = parsed.scheme.lower()
-        if scheme not in ("http", "https"):
+        if parsed.scheme.lower() not in ("http", "https"):
             return None
 
         # Validate network location (host)
         if not _is_valid_netloc(parsed.netloc):
             return None
 
-        if parsed.scheme != scheme:
-            parsed = parsed._replace(scheme=scheme)
         return urlunsplit(parsed)
     except ValueError:
         # Discard syntactically malformed URLs

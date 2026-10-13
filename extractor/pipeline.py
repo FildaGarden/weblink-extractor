@@ -127,9 +127,6 @@ def _consumer_loop(output_path: str, page_queue: queue.Queue) -> PipelineStats:
             if item is _SENTINEL:
                 break
 
-            if not isinstance(item, FetchResult):
-                continue
-
             if item.error is not None:
                 # Page fetch failed or was non-HTML
                 urls_failed += 1

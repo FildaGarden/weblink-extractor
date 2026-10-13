@@ -190,6 +190,17 @@ class TestPageFetcher(unittest.TestCase):
         self.assertIsNone(result.html)
 
     @patch("urllib.request.urlopen")
+    def test_fetch_urlerror_timeout(self, mock_urlopen: MagicMock) -> None:
+        """URLError wrapping socket.timeout produces error 'Request timed out'."""
+        mock_urlopen.side_effect = urllib.error.URLError(socket.timeout("timed out"))
+
+        result = fetch_page("https://example.com/slow_socket", timeout=1.0)
+
+        self.assertIsNone(result.status)
+        self.assertEqual(result.error, "Request timed out")
+        self.assertIsNone(result.html)
+
+    @patch("urllib.request.urlopen")
     def test_fetch_unreachable_host(self, mock_urlopen: MagicMock) -> None:
         """Unreachable host produces connection error."""
         gaierr = socket.gaierror(-2, "Name or service not known")

@@ -59,7 +59,7 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "-r",
         type=int,
         default=0,
-        help="Maximum retries for transient failures (5xx, timeouts, connection errors; default: 0).",
+        help="Maximum retries for transient failures (500/502/503/504, timeouts, connection resets; default: 0).",
     )
 
     parsed = parser.parse_args(args)

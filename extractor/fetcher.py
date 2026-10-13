@@ -13,11 +13,15 @@ MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent memory exhaustion & 
 TRANSIENT_HTTP_STATUSES = {500, 502, 503, 504}
 
 
-def _decompress_body(raw_bytes: bytes, encoding: str) -> tuple[bytes | None, str | None]:
-    """Safely decompress gzip or deflate payload enforcing maximum output limit."""
+def _decompress_body(raw_bytes: bytes, encoding: str) -> bytes:
+    """Safely decompress gzip or deflate payload enforcing maximum output limit.
+
+    Raises:
+        ValueError: If decompression fails or decompressed size exceeds MAX_BODY_BYTES.
+    """
     encoding = encoding.strip().lower()
     if encoding not in ("gzip", "deflate"):
-        return raw_bytes, None
+        return raw_bytes
 
     if encoding == "gzip":
         wbits_options = [16 + zlib.MAX_WBITS]
@@ -31,12 +35,14 @@ def _decompress_body(raw_bytes: bytes, encoding: str) -> tuple[bytes | None, str
             decompressor = zlib.decompressobj(wbits)
             data = decompressor.decompress(raw_bytes, max_length=MAX_BODY_BYTES + 1)
             if len(data) > MAX_BODY_BYTES or len(decompressor.unconsumed_tail) > 0:
-                return None, "Decompressed content exceeded maximum allowed size (10 MB)"
-            return data, None
+                raise ValueError("Decompressed content exceeded maximum allowed size (10 MB)")
+            return data
+        except ValueError:
+            raise
         except Exception as err:
             last_err = err
 
-    return None, f"Decompression error: {last_err}"
+    raise ValueError(f"Decompression error: {last_err}")
 
 
 def fetch_page(
@@ -126,17 +132,16 @@ def fetch_page(
                 # Decompress if encoded (gzip/deflate) with streaming size limit
                 content_encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
                 if content_encoding in ("gzip", "deflate"):
-                    decompressed_bytes, decomp_err = _decompress_body(raw_bytes, content_encoding)
-                    if decomp_err is not None:
+                    try:
+                        raw_bytes = _decompress_body(raw_bytes, content_encoding)
+                    except ValueError as decomp_err:
                         return FetchResult(
                             url=url,
                             final_url=final_url,
                             status=status,
                             html=None,
-                            error=decomp_err,
+                            error=str(decomp_err),
                         )
-                    assert decompressed_bytes is not None
-                    raw_bytes = decompressed_bytes
 
                 charset = response.headers.get_content_charset() or "utf-8"
                 try:
@@ -185,7 +190,7 @@ def fetch_page(
             )
 
         except urllib.error.URLError as err:
-            is_timeout = isinstance(err.reason, TimeoutError) or "timed out" in str(err.reason).lower()
+            is_timeout = isinstance(err.reason, TimeoutError)
             is_conn_error = isinstance(err.reason, ConnectionError)
 
             # Only retry transient timeouts or connection resets/refusals. Never retry DNS NXDOMAIN or SSL errors!
@@ -204,12 +209,11 @@ def fetch_page(
 
         except Exception as err:
             # Non-network unexpected errors are never retried
+            err_msg = f"{type(err).__name__}: {err}" if str(err) else type(err).__name__
             return FetchResult(
                 url=url,
                 final_url=url,
                 status=None,
                 html=None,
-                error=str(err),
+                error=err_msg,
             )
-
-    return FetchResult(url=url, final_url=url, error="Request failed")
