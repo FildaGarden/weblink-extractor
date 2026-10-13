@@ -8,33 +8,30 @@ Implemented with **zero external dependencies**, relying exclusively on Python s
 
 ## Architecture
 
-The program uses a **Producer-Consumer pipeline** connected by a bounded, thread-safe queue:
+The program uses a **Producer-Consumer pipeline** based on a classic **Worker Pool**:
 
 ```
 [ Input File (urls.txt) ]
           │
-          ▼
+          ▼  (lazily streamed by feeder thread)
 ┌──────────────────────────────────────────────┐
-│ Producer Coordinator                         │
-│ • Lazily streams URLs (skips '#' & blanks)   │
-│ • Throttles task submission via Semaphore    │
-│ • Runs ThreadPoolExecutor (max_workers=N)    │
+│ Bounded URL Queue (url_queue, maxsize=Q)     │
 └──────────────────────┬───────────────────────┘
                        │
-                       ▼  (concurrent fetches)
+                       ▼  (concurrent fetches by N workers)
 ┌──────────────────────────────────────────────┐
 │ Worker Threads (urllib.request)              │
-│ • Follows HTTP redirects                     │
-│ • Enforces 10 MB maximum body size limit     │
-│ • Decompresses gzip and deflate              │
-│ • Enforces socket timeout                    │
-│ • Retries transient errors (5xx, timeouts)   │
-│ • Catches failures (4xx, DNS, non-HTML)      │
+│ • Pull URLs, follow HTTP redirects           │
+│ • Decompress gzip / deflate payloads         │
+│ • Enforce 10 MB maximum body size limit      │
+│ • Enforce socket timeout                     │
+│ • Retry transient errors (5xx, resets)       │
+│ • Catch failures (4xx, DNS, non-HTML)        │
 └──────────────────────┬───────────────────────┘
                        │
                        ▼  blocks on put() when full (Backpressure)
 ┌──────────────────────────────────────────────┐
-│ Bounded Queue (queue.Queue, default 10)      │
+│ Bounded Page Queue (page_queue, maxsize=Q)   │
 └──────────────────────┬───────────────────────┘
                        │
                        ▼  consumes FetchResult
@@ -56,7 +53,7 @@ The program uses a **Producer-Consumer pipeline** connected by a bounded, thread
 ## Requirements & Installation
 
 - **Python**: 3.11 or higher
-- **Dependencies**: None (uses only `urllib`, `html.parser`, `concurrent.futures`, `queue`, `threading`, `json`, `argparse`, `dataclasses`, `unittest`).
+- **Dependencies**: None (uses only `urllib`, `gzip`, `zlib`, `html.parser`, `queue`, `threading`, `json`, `argparse`, `dataclasses`, `unittest`).
 
 No virtual environment or `pip install` required. Clone and run directly:
 
@@ -74,7 +71,7 @@ python -m extractor --input sample_urls.txt --output links.jsonl
 | `--output` | `-o` | *(required)* | Path to output `.jsonl` file (overwritten on each run). |
 | `--concurrency` | `-c` | `5` | Maximum concurrent fetch workers. |
 | `--timeout` | `-t` | `10.0` | Socket timeout in seconds per network request. |
-| `--queue-size` | `-q` | `10` | Maximum capacity of the bounded queue. |
+| `--queue-size` | `-q` | `10` | Maximum capacity of bounded queues. |
 | `--retries` | `-r` | `0` | Retries for transient failures (timeouts, 500/502/503/504, connection resets). Never retries 4xx or permanent DNS errors. |
 
 ### Example
@@ -93,16 +90,15 @@ Summary: 3 URLs ok, 5 URLs failed, 256 total links found
 ## Design Decisions
 
 ### Concurrency Model
-Threads (`ThreadPoolExecutor` + `queue.Queue`) were chosen because:
-1. **Zero dependencies**: `urllib.request` is synchronous and blocking. Using `asyncio` would either require third-party libraries (`httpx`, `aiohttp`) or wrapping blocking calls in `run_in_executor`, which uses a thread pool anyway.
-2. **I/O and CPU overlap**: Network socket calls release Python's Global Interpreter Lock (GIL), allowing worker threads to perform HTTP I/O concurrently. Pure Python HTML parsing does not release the GIL, but it runs while other threads are suspended waiting on network sockets. For CPU-bound parsing at extreme scale, parsing would be offloaded to a process pool.
-3. **Asyncio trade-off**: `asyncio` with `httpx` is also a valid architectural choice, but threading provides native synchronization with `queue.Queue` with no event loop overhead or external packages.
+A classic **Worker Pool with bounded queues** was chosen because:
+1. **Zero dependencies**: `urllib.request` is synchronous and blocking. Using `asyncio` would either require third-party libraries (`httpx`, `aiohttp`) or wrapping blocking calls in thread executors.
+2. **I/O and CPU overlap**: Network socket calls release Python's Global Interpreter Lock (GIL), allowing worker threads to perform HTTP I/O concurrently. Pure Python HTML parsing does not release the GIL, but it runs in the consumer while worker threads are suspended waiting on network sockets.
+3. **Simplicity & Intuitiveness**: A feeder thread, $N$ worker threads, and a consumer thread connected by bounded `queue.Queue` instances mirrors standard goroutine/channel patterns in Go and `BlockingQueue` patterns in Java.
 
 ### Backpressure & Memory Bounds
-- **Queue saturation**: When the queue reaches `--queue-size`, `page_queue.put()` blocks the worker thread until the consumer reads an item.
-- **Task dispatch throttling**: `ThreadPoolExecutor` has an unbounded task queue. The input file is streamed lazily line-by-line (`iter_input_urls`), and we use `threading.Semaphore(concurrency)` in the coordinator loop so that at most `concurrency` tasks are in-flight in the executor at once. Because the semaphore is released only *after* `page_queue.put()` succeeds, full queue backpressure halts the coordinator from reading further URLs from disk.
-- **Memory footprint**: The maximum number of response bodies in memory at any instant is bounded by `queue_size + concurrency + 1` (buffered in queue + held by blocked workers + actively parsed by consumer).
-- **Deadlock protection**: Worker `put()` calls poll with a short timeout against a `stop_event`. If the consumer encounters a fatal disk error, the coordinator and workers unblock and terminate cleanly instead of deadlocking.
+- **Queue saturation**: Both `url_queue` and `page_queue` are bounded to `--queue-size`. If workers fall behind, `url_queue.put()` blocks the feeder thread, halting disk reads. If the consumer falls behind, `page_queue.put()` blocks worker threads, halting network fetches.
+- **Memory footprint**: The maximum number of response bodies in memory at any instant is strictly bounded by `queue_size + concurrency + 1` (buffered in queue + held by blocked workers + actively parsed by consumer).
+- **Deadlock protection**: All worker and feeder queue operations poll with a short timeout against a `stop_event`. If the consumer encounters a fatal disk error, all background threads unblock and join cleanly without hanging.
 
 ### Link Normalization & Resilience
 - **Resolution**: Relative links are resolved against `final_url` (after redirects) via `urllib.parse.urljoin`.

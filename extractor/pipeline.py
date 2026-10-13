@@ -1,16 +1,13 @@
 """Producer-consumer pipeline coordinating concurrent fetching and HTML parsing."""
 
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
 import queue
 import threading
-from typing import Any
 
 from extractor.fetcher import fetch_page
 from extractor.models import ExtractionResult, FetchResult, PipelineStats
 from extractor.parser import extract_links
 
-# Sentinel token signaling consumer termination
 _SENTINEL = object()
 
 
@@ -19,9 +16,8 @@ def iter_input_urls(input_path: str) -> Iterator[str]:
     with open(input_path, "r", encoding="utf-8", errors="replace") as file:
         for line in file:
             stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            yield stripped
+            if stripped and not stripped.startswith("#"):
+                yield stripped
 
 
 def read_input_urls(input_path: str) -> list[str]:
@@ -29,116 +25,65 @@ def read_input_urls(input_path: str) -> list[str]:
     return list(iter_input_urls(input_path))
 
 
-def _put_queue(
+def _fetch_worker(
+    url_queue: queue.Queue,
     page_queue: queue.Queue,
-    item: Any,
+    timeout: float,
+    retries: int,
     stop_event: threading.Event,
-    timeout: float = 0.2,
-) -> bool:
-    """Put an item into the bounded queue, polling stop_event to avoid hanging if consumer stops."""
+) -> None:
+    """Worker thread: pulls URLs from url_queue, fetches pages, and puts results into page_queue."""
     while not stop_event.is_set():
         try:
-            page_queue.put(item, timeout=timeout)
-            return True
-        except queue.Full:
+            url = url_queue.get(timeout=0.1)
+        except queue.Empty:
             continue
-    return False
+
+        if url is _SENTINEL:
+            break
+
+        try:
+            result = fetch_page(url, timeout=timeout, retries=retries)
+        except Exception as err:
+            result = FetchResult(url=url, final_url=url, error=str(err))
+
+        while not stop_event.is_set():
+            try:
+                page_queue.put(result, timeout=0.1)
+                break
+            except queue.Full:
+                continue
 
 
-def _producer_worker(
-    url: str,
-    timeout: float,
-    retries: int,
-    page_queue: queue.Queue,
-    semaphore: threading.Semaphore,
-    stop_event: threading.Event,
-) -> None:
-    """Worker task executed in ThreadPoolExecutor for a single URL fetch."""
-    try:
-        if stop_event.is_set():
-            return
-        result = fetch_page(url, timeout=timeout, retries=retries)
-        _put_queue(page_queue, result, stop_event)
-    except Exception as err:
-        fallback_result = FetchResult(
-            url=url,
-            final_url=url,
-            status=None,
-            html=None,
-            error=str(err),
-        )
-        _put_queue(page_queue, fallback_result, stop_event)
-    finally:
-        semaphore.release()
-
-
-def _producer_thread_target(
-    url_stream: Iterator[str],
-    concurrency: int,
-    timeout: float,
-    retries: int,
+def _consumer_loop(
+    output_path: str,
     page_queue: queue.Queue,
     stop_event: threading.Event,
-    producer_errors: list[Exception],
-) -> None:
-    """Producer coordinator: reads URLs lazily and submits fetches bounded by concurrency semaphore.
-
-    The semaphore throttles task dispatch against the ThreadPoolExecutor's unbounded queue.
-    """
-    semaphore = threading.Semaphore(concurrency)
-    try:
-        with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="Fetcher") as executor:
-            for url in url_stream:
-                if stop_event.is_set():
-                    break
-                # Acquire with timeout to observe stop_event promptly
-                while not stop_event.is_set():
-                    if semaphore.acquire(timeout=0.2):
-                        executor.submit(
-                            _producer_worker,
-                            url,
-                            timeout,
-                            retries,
-                            page_queue,
-                            semaphore,
-                            stop_event,
-                        )
-                        break
-    except Exception as err:
-        producer_errors.append(err)
-    finally:
-        # Enqueue sentinel signaling consumer shutdown with deadlock-free polling
-        _put_queue(page_queue, _SENTINEL, stop_event)
-
-
-def _consumer_loop(output_path: str, page_queue: queue.Queue) -> PipelineStats:
-    """Consumer loop: parses HTML from fetched pages, writes JSON lines, and computes summary stats.
-
-    Overwrites output_path upon starting. Each item's parsing is isolated so that bad HTML never halts
-    the pipeline run. Unhandled disk write errors (e.g. disk full) intentionally propagate.
-    """
+) -> PipelineStats:
+    """Consumer loop: reads fetched pages from page_queue, parses links, and writes JSONL."""
     urls_ok = 0
     urls_failed = 0
     total_links = 0
 
     with open(output_path, "w", encoding="utf-8") as out_file:
-        while True:
-            item = page_queue.get()
+        while not stop_event.is_set():
+            try:
+                item = page_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
             if item is _SENTINEL:
                 break
 
             if item.error is not None:
-                # Page fetch failed or was non-HTML
                 urls_failed += 1
                 record = ExtractionResult(
                     url=item.url,
                     final_url=item.final_url,
                     status=item.status,
-                    links=[],
                     error=item.error,
                 )
             else:
-                # Parse HTML links; catch any corrupt/unhandled parse failure per item
                 try:
                     links = extract_links(item.html or "", item.final_url)
                     urls_ok += 1
@@ -148,7 +93,6 @@ def _consumer_loop(output_path: str, page_queue: queue.Queue) -> PipelineStats:
                         final_url=item.final_url,
                         status=item.status,
                         links=links,
-                        error=None,
                     )
                 except Exception as parse_err:
                     urls_failed += 1
@@ -156,7 +100,6 @@ def _consumer_loop(output_path: str, page_queue: queue.Queue) -> PipelineStats:
                         url=item.url,
                         final_url=item.final_url,
                         status=item.status,
-                        links=[],
                         error=f"Extraction error: {parse_err}",
                     )
 
@@ -180,40 +123,81 @@ def run_pipeline(
 ) -> PipelineStats:
     """Execute the full web link extraction pipeline and return summary stats.
 
-    1. Streams URLs lazily from input_path.
-    2. Runs producer thread managing concurrent HTTP fetches throttled by semaphore.
-    3. Buffers fetched pages in a bounded queue (queue_size) for natural backpressure.
-    4. Runs consumer in the calling thread to parse HTML, stream output JSON lines, and collect stats.
-    5. Exits cleanly when all URLs are processed, leaving no hanging threads.
+    Uses a classic Worker Pool architecture:
+    1. Feeder thread streams URLs from file into bounded url_queue (backpressure on file reading).
+    2. Concurrency worker threads pull URLs, fetch pages, and push results to bounded page_queue.
+    3. Consumer (calling thread) parses HTML, streams JSONL records to disk, and tracks statistics.
+    4. Deterministic shutdown via sentinel tokens and stop_event guarantees zero orphan threads.
     """
-    url_stream = iter_input_urls(input_path)
-
-    # Bounded queue between producer and consumer
+    url_queue: queue.Queue = queue.Queue(maxsize=queue_size)
     page_queue: queue.Queue = queue.Queue(maxsize=queue_size)
     stop_event = threading.Event()
-    producer_errors: list[Exception] = []
 
-    # Start producer in a separate background thread
-    producer_thread = threading.Thread(
-        target=_producer_thread_target,
-        args=(url_stream, concurrency, timeout, retries, page_queue, stop_event, producer_errors),
-        name="ProducerCoordinator",
-    )
-    producer_thread.start()
+    # 1. Start worker threads
+    workers = [
+        threading.Thread(
+            target=_fetch_worker,
+            args=(url_queue, page_queue, timeout, retries, stop_event),
+            name=f"Fetcher-{i}",
+        )
+        for i in range(concurrency)
+    ]
+    for w in workers:
+        w.start()
+
+    # 2. Feeder thread reads URLs from file into url_queue, then coordinates worker shutdown
+    feeder_errors: list[Exception] = []
+
+    def _feeder() -> None:
+        try:
+            for url in iter_input_urls(input_path):
+                if stop_event.is_set():
+                    break
+                while not stop_event.is_set():
+                    try:
+                        url_queue.put(url, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+        except Exception as err:
+            feeder_errors.append(err)
+        finally:
+            # Signal all workers to stop
+            for _ in workers:
+                while not stop_event.is_set():
+                    try:
+                        url_queue.put(_SENTINEL, timeout=0.1)
+                        break
+                    except queue.Full:
+                        continue
+            # Wait for all workers to finish putting results
+            for w in workers:
+                w.join()
+            # Signal consumer to stop
+            while not stop_event.is_set():
+                try:
+                    page_queue.put(_SENTINEL, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
+
+    feeder_thread = threading.Thread(target=_feeder, name="URLFeeder")
+    feeder_thread.start()
 
     try:
         # Consumer processes pages in the calling thread and returns statistics
-        stats = _consumer_loop(output_path, page_queue)
+        stats = _consumer_loop(output_path, page_queue, stop_event)
     except Exception:
         stop_event.set()
         raise
     finally:
         stop_event.set()
-        # Ensure producer thread is fully terminated before returning
-        producer_thread.join()
+        feeder_thread.join()
+        for w in workers:
+            w.join()
 
-    # If the producer encountered a fatal error reading input, re-raise it in the calling thread
-    if producer_errors:
-        raise producer_errors[0]
+    # If file reading encountered an error, propagate it
+    if feeder_errors:
+        raise feeder_errors[0]
 
     return stats

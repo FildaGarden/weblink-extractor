@@ -1,5 +1,6 @@
 """HTTP page fetcher with timeout, compression support, and transient failure retries."""
 
+import gzip
 import time
 import urllib.error
 import urllib.parse
@@ -9,40 +10,22 @@ import zlib
 from extractor.models import FetchResult
 
 DEFAULT_USER_AGENT = "WebLinkExtractor/1.0"
-MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent memory exhaustion & zip bombs
+MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MB limit to prevent memory exhaustion
 TRANSIENT_HTTP_STATUSES = {500, 502, 503, 504}
 
 
 def _decompress_body(raw_bytes: bytes, encoding: str) -> bytes:
-    """Safely decompress gzip or deflate payload enforcing maximum output limit.
-
-    Raises:
-        ValueError: If decompression fails or decompressed size exceeds MAX_BODY_BYTES.
-    """
+    """Decompress gzip or deflate response payload."""
     encoding = encoding.strip().lower()
-    if encoding not in ("gzip", "deflate"):
-        return raw_bytes
-
     if encoding == "gzip":
-        wbits_options = [16 + zlib.MAX_WBITS]
-    else:
-        # Standard zlib header, then fallback to raw deflate (-MAX_WBITS)
-        wbits_options = [zlib.MAX_WBITS, -zlib.MAX_WBITS]
-
-    last_err: Exception | None = None
-    for wbits in wbits_options:
+        return gzip.decompress(raw_bytes)
+    elif encoding == "deflate":
         try:
-            decompressor = zlib.decompressobj(wbits)
-            data = decompressor.decompress(raw_bytes, max_length=MAX_BODY_BYTES + 1)
-            if len(data) > MAX_BODY_BYTES or len(decompressor.unconsumed_tail) > 0:
-                raise ValueError("Decompressed content exceeded maximum allowed size (10 MB)")
-            return data
-        except ValueError:
-            raise
-        except Exception as err:
-            last_err = err
-
-    raise ValueError(f"Decompression error: {last_err}")
+            return zlib.decompress(raw_bytes)
+        except zlib.error:
+            # Fall back to raw deflate (-MAX_WBITS) for servers omitting zlib header
+            return zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
+    return raw_bytes
 
 
 def fetch_page(
@@ -64,22 +47,12 @@ def fetch_page(
     # 1. Validate basic URL format before attempting network I/O (never retried)
     try:
         parsed = urllib.parse.urlsplit(url)
-        if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
-            return FetchResult(
-                url=url,
-                final_url=url,
-                status=None,
-                html=None,
-                error="Invalid URL",
-            )
+        is_valid = parsed.scheme.lower() in ("http", "https") and bool(parsed.netloc)
     except Exception:
-        return FetchResult(
-            url=url,
-            final_url=url,
-            status=None,
-            html=None,
-            error="Invalid URL",
-        )
+        is_valid = False
+
+    if not is_valid:
+        return FetchResult(url=url, final_url=url, error="Invalid URL")
 
     # 2. Build HTTP request with specified User-Agent and Accept-Encoding
     req = urllib.request.Request(
@@ -97,13 +70,12 @@ def fetch_page(
                 final_url = response.geturl()
                 status = getattr(response, "status", response.getcode())
 
-                # Requirement: Non-200 responses (e.g. 201, 203) produce an error record
+                # Non-200 responses (e.g. 201, 203) produce an error record
                 if status != 200:
                     return FetchResult(
                         url=url,
                         final_url=final_url,
                         status=status,
-                        html=None,
                         error=f"HTTP {status}",
                     )
 
@@ -114,34 +86,33 @@ def fetch_page(
                         url=url,
                         final_url=final_url,
                         status=status,
-                        html=None,
                         error=f"Non-HTML content ({content_type})",
                     )
 
-                # Read response body with maximum size guard
+                # Read response body
                 raw_bytes = response.read(MAX_BODY_BYTES + 1)
+
+                # Decompress if encoded (gzip/deflate)
+                content_encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
+                if content_encoding in ("gzip", "deflate"):
+                    try:
+                        raw_bytes = _decompress_body(raw_bytes, content_encoding)
+                    except Exception as decomp_err:
+                        return FetchResult(
+                            url=url,
+                            final_url=final_url,
+                            status=status,
+                            error=f"Decompression error: {decomp_err}",
+                        )
+
+                # Check maximum allowed size limit (10 MB)
                 if len(raw_bytes) > MAX_BODY_BYTES:
                     return FetchResult(
                         url=url,
                         final_url=final_url,
                         status=status,
-                        html=None,
                         error="Response exceeded maximum allowed size (10 MB)",
                     )
-
-                # Decompress if encoded (gzip/deflate) with streaming size limit
-                content_encoding = (response.headers.get("Content-Encoding") or "").strip().lower()
-                if content_encoding in ("gzip", "deflate"):
-                    try:
-                        raw_bytes = _decompress_body(raw_bytes, content_encoding)
-                    except ValueError as decomp_err:
-                        return FetchResult(
-                            url=url,
-                            final_url=final_url,
-                            status=status,
-                            html=None,
-                            error=str(decomp_err),
-                        )
 
                 charset = response.headers.get_content_charset() or "utf-8"
                 try:
@@ -154,7 +125,6 @@ def fetch_page(
                     final_url=final_url,
                     status=status,
                     html=html,
-                    error=None,
                 )
 
         except urllib.error.HTTPError as err:
@@ -171,7 +141,6 @@ def fetch_page(
                 url=url,
                 final_url=final_url,
                 status=status_code,
-                html=None,
                 error=f"HTTP {status_code}",
             )
 
@@ -184,8 +153,6 @@ def fetch_page(
             return FetchResult(
                 url=url,
                 final_url=url,
-                status=None,
-                html=None,
                 error=error_msg,
             )
 
@@ -202,8 +169,6 @@ def fetch_page(
             return FetchResult(
                 url=url,
                 final_url=url,
-                status=None,
-                html=None,
                 error=error_msg,
             )
 
@@ -213,7 +178,5 @@ def fetch_page(
             return FetchResult(
                 url=url,
                 final_url=url,
-                status=None,
-                html=None,
                 error=err_msg,
             )
