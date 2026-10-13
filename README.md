@@ -61,6 +61,15 @@ No virtual environment or `pip install` required. Clone and run directly:
 python -m extractor --input sample_urls.txt --output links.jsonl
 ```
 
+### Running with Docker (Optional)
+
+Alternatively, build and run via Docker without needing a local Python environment:
+
+```bash
+docker build -t weblink-extractor .
+docker run --rm -v $(pwd):/data weblink-extractor -i sample_urls.txt -o links.jsonl
+```
+
 ---
 
 ## CLI Options
