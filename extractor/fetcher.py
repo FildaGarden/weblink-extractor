@@ -5,7 +5,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zlib
 
 from extractor.models import FetchResult
 
@@ -15,13 +14,8 @@ TRANSIENT_HTTP_STATUSES = {500, 502, 503, 504}
 
 
 def _decompress_body(raw_bytes: bytes, encoding: str) -> bytes:
-    if encoding == "gzip" or raw_bytes.startswith(b"\x1f\x8b"):
+    if encoding == "gzip":
         return gzip.decompress(raw_bytes)
-    if encoding == "deflate":
-        try:
-            return zlib.decompress(raw_bytes)
-        except zlib.error:
-            return zlib.decompress(raw_bytes, -zlib.MAX_WBITS)
     return raw_bytes
 
 
@@ -31,9 +25,8 @@ def fetch_page(
     user_agent: str = DEFAULT_USER_AGENT,
     retries: int = 0,
     retry_delay: float = 0.5,
-) -> FetchResult:
+) -> FetchResult:  # pyright: ignore[reportReturnType]
     """Fetch a single page and return its HTML or an informative error.
-
 
     Requirements addressed:
     - Every request has a configurable timeout.
@@ -58,7 +51,7 @@ def fetch_page(
         url,
         headers={
             "User-Agent": user_agent,
-            "Accept-Encoding": "gzip, deflate",
+            "Accept-Encoding": "gzip",
         },
     )
 
@@ -98,16 +91,12 @@ def fetch_page(
                         error="Response exceeded maximum allowed size (10 MB)",
                     )
 
-                # Decompress if encoded (gzip/deflate)
+                # Decompress if encoded
                 raw_encoding = response.headers.get("Content-Encoding")
                 encoding = (
                     raw_encoding.strip().lower()
                     if isinstance(raw_encoding, str)
                     else ""
-                )
-
-                encoding = (
-                    (response.headers.get("Content-Encoding") or "").strip().lower()
                 )
                 if encoding not in ("", "identity", "gzip"):
                     return FetchResult(
@@ -117,6 +106,7 @@ def fetch_page(
                         error=f"Unsupported Content-Encoding ({encoding})",
                     )
                 raw_bytes = _decompress_body(raw_bytes, encoding)
+
                 # Check maximum allowed size limit after decompression
                 if len(raw_bytes) > MAX_BODY_BYTES:
                     return FetchResult(

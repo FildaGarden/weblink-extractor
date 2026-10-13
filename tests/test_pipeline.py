@@ -1,18 +1,14 @@
-"""End-to-end integration tests for the extraction pipeline against a local test server."""
-
 import http.server
 import json
-from pathlib import Path
 import tempfile
 import threading
 import unittest
+from pathlib import Path
 
 from extractor.pipeline import read_input_urls, run_pipeline
 
 
 class _LocalTestHTTPHandler(http.server.BaseHTTPRequestHandler):
-    """Local test HTTP server handler serving test pages and failure conditions."""
-
     def do_GET(self) -> None:
         if self.path == "/page1":
             self.send_response(200)
@@ -73,7 +69,9 @@ class TestPipelineIntegration(unittest.TestCase):
         cls.port = cls.server.server_port
         cls.base_url = f"http://127.0.0.1:{cls.port}"
 
-        cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread = threading.Thread(
+            target=cls.server.serve_forever, daemon=True
+        )
         cls.server_thread.start()
 
     @classmethod
@@ -96,7 +94,9 @@ class TestPipelineIntegration(unittest.TestCase):
                 encoding="utf-8",
             )
             urls = read_input_urls(str(file_path))
-            self.assertEqual(urls, ["https://example.com/one", "https://example.com/two"])
+            self.assertEqual(
+                urls, ["https://example.com/one", "https://example.com/two"]
+            )
 
     def test_full_pipeline_end_to_end(self) -> None:
         """Run complete pipeline against local HTTP endpoints and verify output JSONL."""
@@ -128,7 +128,10 @@ class TestPipelineIntegration(unittest.TestCase):
             self.assertEqual(stats.urls_ok, 2)
             self.assertEqual(stats.urls_failed, 3)
             self.assertEqual(stats.total_links, 3)
-            self.assertEqual(stats.summary_line(), "Summary: 2 URLs ok, 3 URLs failed, 3 total links found")
+            self.assertEqual(
+                stats.summary_line(),
+                "Summary: 2 URLs ok, 3 URLs failed, 3 total links found",
+            )
 
             # Read and parse JSONL records
             records = []
@@ -187,7 +190,9 @@ class TestPipelineIntegration(unittest.TestCase):
             output_file = Path(tmpdir) / "output.jsonl"
 
             # Pre-populate output file with dummy content
-            output_file.write_text('{"dummy": "old_record"}\n{"dummy": "old_record2"}\n')
+            output_file.write_text(
+                '{"dummy": "old_record"}\n{"dummy": "old_record2"}\n'
+            )
 
             # Run with single URL
             input_file.write_text(f"{self.base_url}/page1\n")
@@ -234,7 +239,9 @@ class TestPipelineIntegration(unittest.TestCase):
 
             input_file.write_text(f"{self.base_url}/page1\n{self.base_url}/target\n")
 
-            real_extract_links = __import__("extractor.parser", fromlist=["extract_links"]).extract_links
+            real_extract_links = __import__(
+                "extractor.parser", fromlist=["extract_links"]
+            ).extract_links
 
             def mock_extract(html: str, base: str) -> list[str]:
                 if "page1" in base:
@@ -258,7 +265,9 @@ class TestPipelineIntegration(unittest.TestCase):
 
             self.assertEqual(len(records), 2)
             by_url = {r["url"]: r for r in records}
-            self.assertIn("Extraction error", by_url[f"{self.base_url}/page1"]["error"] or "")
+            self.assertIn(
+                "Extraction error", by_url[f"{self.base_url}/page1"]["error"] or ""
+            )
             self.assertIsNone(by_url[f"{self.base_url}/target"]["error"])
 
     def test_non_utf8_input_file_handled_gracefully(self) -> None:
@@ -268,7 +277,9 @@ class TestPipelineIntegration(unittest.TestCase):
             output_file = Path(tmpdir) / "output.jsonl"
 
             # Write invalid UTF-8 sequence (e.g. byte 0xFF) followed by valid URL
-            input_file.write_bytes(f"{self.base_url}/page1\n\xff\xfeinvalid\n".encode("latin-1"))
+            input_file.write_bytes(
+                f"{self.base_url}/page1\n\xff\xfeinvalid\n".encode("latin-1")
+            )
 
             stats = run_pipeline(
                 input_path=str(input_file),
@@ -290,7 +301,10 @@ class TestPipelineIntegration(unittest.TestCase):
             output_file = Path(tmpdir) / "output.jsonl"
             input_file.write_text(f"{self.base_url}/page1\n")
 
-            with patch("extractor.models.ExtractionResult.to_json", side_effect=OSError("Disk quota exceeded")):
+            with patch(
+                "extractor.models.ExtractionResult.to_json",
+                side_effect=OSError("Disk quota exceeded"),
+            ):
                 with self.assertRaises(OSError):
                     run_pipeline(
                         input_path=str(input_file),

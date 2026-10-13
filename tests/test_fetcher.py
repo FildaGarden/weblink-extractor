@@ -1,16 +1,12 @@
-"""Unit tests for HTTP page fetcher (offline, mocked)."""
-
 import socket
 import unittest
-from unittest.mock import MagicMock, patch
 import urllib.error
+from unittest.mock import MagicMock, patch
 
 from extractor.fetcher import fetch_page
 
 
 class TestPageFetcher(unittest.TestCase):
-    """Test suite for HTTP fetch operations and error tolerance."""
-
     @patch("urllib.request.urlopen")
     def test_fetch_success(self, mock_urlopen: MagicMock) -> None:
         """Successful fetch returns 200 status and decoded HTML."""
@@ -43,7 +39,9 @@ class TestPageFetcher(unittest.TestCase):
         mock_response.status = 200
         mock_response.headers.get_content_type.return_value = "text/html"
         mock_response.headers.get_content_charset.return_value = "utf-8"
-        mock_response.headers.get.side_effect = lambda key, default=None: "gzip" if key == "Content-Encoding" else default
+        mock_response.headers.get.side_effect = lambda key, default=None: (
+            "gzip" if key == "Content-Encoding" else default
+        )
         mock_response.read.return_value = compressed
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
@@ -61,7 +59,9 @@ class TestPageFetcher(unittest.TestCase):
         mock_response.status = 200
         mock_response.headers.get_content_type.return_value = "text/html"
         mock_response.headers.get_content_charset.return_value = "utf-8"
-        mock_response.headers.get.side_effect = lambda key, default=None: "deflate" if key == "Content-Encoding" else default
+        mock_response.headers.get.side_effect = lambda key, default=None: (
+            "deflate" if key == "Content-Encoding" else default
+        )
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
         result = fetch_page("https://example.com/unsupported")
@@ -83,7 +83,9 @@ class TestPageFetcher(unittest.TestCase):
         mock_response.status = 200
         mock_response.headers.get_content_type.return_value = "text/html"
         mock_response.headers.get_content_charset.return_value = "utf-8"
-        mock_response.headers.get.side_effect = lambda key, default=None: "gzip" if key == "Content-Encoding" else default
+        mock_response.headers.get.side_effect = lambda key, default=None: (
+            "gzip" if key == "Content-Encoding" else default
+        )
         mock_response.read.return_value = compressed
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
@@ -108,13 +110,17 @@ class TestPageFetcher(unittest.TestCase):
         self.assertIsNone(result.html)
 
     @patch("urllib.request.urlopen")
-    def test_fetch_retry_on_connection_reset_during_read(self, mock_urlopen: MagicMock) -> None:
+    def test_fetch_retry_on_connection_reset_during_read(
+        self, mock_urlopen: MagicMock
+    ) -> None:
         """ConnectionResetError during body read is retried and succeeds."""
         mock_err_resp = MagicMock()
         mock_err_resp.status = 200
         mock_err_resp.geturl.return_value = "https://example.com/reset"
         mock_err_resp.headers.get_content_type.return_value = "text/html"
-        mock_err_resp.read.side_effect = ConnectionResetError("Connection reset by peer")
+        mock_err_resp.read.side_effect = ConnectionResetError(
+            "Connection reset by peer"
+        )
 
         mock_ok_resp = MagicMock()
         mock_ok_resp.status = 200
@@ -144,7 +150,7 @@ class TestPageFetcher(unittest.TestCase):
             url="https://example.com/missing",
             code=404,
             msg="Not Found",
-            hdrs=None,  # type: ignore[arg-type]
+            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             fp=None,
         )
         mock_urlopen.side_effect = err
@@ -164,7 +170,7 @@ class TestPageFetcher(unittest.TestCase):
             url="https://example.com/error",
             code=500,
             msg="Internal Server Error",
-            hdrs=None,  # type: ignore[arg-type]
+            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             fp=None,
         )
         mock_urlopen.side_effect = err
@@ -235,13 +241,15 @@ class TestPageFetcher(unittest.TestCase):
             self.assertIsNone(result.html)
 
     @patch("urllib.request.urlopen")
-    def test_fetch_retry_transient_failure_success(self, mock_urlopen: MagicMock) -> None:
+    def test_fetch_retry_transient_failure_success(
+        self, mock_urlopen: MagicMock
+    ) -> None:
         """Transient 500 error is retried and succeeds on second attempt."""
         err = urllib.error.HTTPError(
             url="https://example.com/retry",
             code=500,
             msg="Internal Server Error",
-            hdrs=None,  # type: ignore[arg-type]
+            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             fp=None,
         )
         mock_response = MagicMock()
@@ -266,13 +274,15 @@ class TestPageFetcher(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 2)
 
     @patch("urllib.request.urlopen")
-    def test_fetch_no_retry_on_501_not_implemented(self, mock_urlopen: MagicMock) -> None:
+    def test_fetch_no_retry_on_501_not_implemented(
+        self, mock_urlopen: MagicMock
+    ) -> None:
         """HTTP 501 Not Implemented is a permanent error and must not be retried."""
         err = urllib.error.HTTPError(
             url="https://example.com/501",
             code=501,
             msg="Not Implemented",
-            hdrs=None,  # type: ignore[arg-type]
+            hdrs=None,  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
             fp=None,
         )
         mock_urlopen.side_effect = err
@@ -290,7 +300,9 @@ class TestPageFetcher(unittest.TestCase):
         gaierr = socket.gaierror(-2, "Name or service not known")
         mock_urlopen.side_effect = urllib.error.URLError(gaierr)
 
-        result = fetch_page("https://this-domain-does-not-exist.invalid", retries=3, retry_delay=0.01)
+        result = fetch_page(
+            "https://this-domain-does-not-exist.invalid", retries=3, retry_delay=0.01
+        )
 
         self.assertIsNone(result.status)
         self.assertIn("Connection failed", result.error or "")
