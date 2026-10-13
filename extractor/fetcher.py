@@ -96,12 +96,14 @@ def fetch_page(
     except urllib.error.HTTPError as err:
         # Server returned a 4xx or 5xx HTTP response
         final_url = err.geturl() or url
+        status_code = err.code
+        err.close()
         return FetchResult(
             url=url,
             final_url=final_url,
-            status=err.code,
+            status=status_code,
             html=None,
-            error=f"HTTP {err.code}",
+            error=f"HTTP {status_code}",
         )
 
     except (TimeoutError, socket.timeout):
