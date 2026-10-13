@@ -5,12 +5,7 @@ from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
 
 class _AnchorParser(HTMLParser):
-    """Streaming HTML parser extracting raw href attributes from <a> tags.
-
-    Subclasses Python's built-in HTMLParser. Unlike DOM parsers (e.g. BeautifulSoup),
-    this is an event-driven SAX-style parser that does not allocate an entire document tree
-    in memory, ensuring high speed and low memory overhead.
-    """
+    """Event-driven HTML parser extracting raw href attributes from <a> tags."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -69,7 +64,7 @@ def normalize_link(href: str, base_url: str) -> str | None:
         if parsed.scheme != scheme:
             parsed = parsed._replace(scheme=scheme)
         return urlunsplit(parsed)
-    except (ValueError, AttributeError):
+    except ValueError:
         # Discard syntactically malformed URLs
         return None
 

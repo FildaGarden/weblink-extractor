@@ -16,7 +16,7 @@ _SENTINEL = object()
 
 def iter_input_urls(input_path: str) -> Iterator[str]:
     """Lazily read URLs from input file line by line, ignoring blank lines and '#' comments."""
-    with open(input_path, "r", encoding="utf-8") as file:
+    with open(input_path, "r", encoding="utf-8", errors="replace") as file:
         for line in file:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
@@ -79,6 +79,7 @@ def _producer_thread_target(
     retries: int,
     page_queue: queue.Queue,
     stop_event: threading.Event,
+    producer_errors: list[Exception],
 ) -> None:
     """Producer coordinator: reads URLs lazily and submits fetches bounded by concurrency semaphore.
 
@@ -103,6 +104,8 @@ def _producer_thread_target(
                             stop_event,
                         )
                         break
+    except Exception as err:
+        producer_errors.append(err)
     finally:
         # Enqueue sentinel signaling consumer shutdown with deadlock-free polling
         _put_queue(page_queue, _SENTINEL, stop_event)
@@ -111,8 +114,8 @@ def _producer_thread_target(
 def _consumer_loop(output_path: str, page_queue: queue.Queue) -> PipelineStats:
     """Consumer loop: parses HTML from fetched pages, writes JSON lines, and computes summary stats.
 
-    Overwrites output_path upon starting. Each item is strictly isolated: a failure parsing or
-    handling one page never halts or aborts the entire pipeline run.
+    Overwrites output_path upon starting. Each item's parsing is isolated so that bad HTML never halts
+    the pipeline run. Unhandled disk write errors (e.g. disk full) intentionally propagate.
     """
     urls_ok = 0
     urls_failed = 0
@@ -124,48 +127,44 @@ def _consumer_loop(output_path: str, page_queue: queue.Queue) -> PipelineStats:
             if item is _SENTINEL:
                 break
 
-            try:
-                if not isinstance(item, FetchResult):
-                    continue
+            if not isinstance(item, FetchResult):
+                continue
 
-                if item.error is not None:
-                    # Page fetch failed or was non-HTML
+            if item.error is not None:
+                # Page fetch failed or was non-HTML
+                urls_failed += 1
+                record = ExtractionResult(
+                    url=item.url,
+                    final_url=item.final_url,
+                    status=item.status,
+                    links=[],
+                    error=item.error,
+                )
+            else:
+                # Parse HTML links; catch any corrupt/unhandled parse failure per item
+                try:
+                    links = extract_links(item.html or "", item.final_url)
+                    urls_ok += 1
+                    total_links += len(links)
+                    record = ExtractionResult(
+                        url=item.url,
+                        final_url=item.final_url,
+                        status=item.status,
+                        links=links,
+                        error=None,
+                    )
+                except Exception as parse_err:
                     urls_failed += 1
                     record = ExtractionResult(
                         url=item.url,
                         final_url=item.final_url,
                         status=item.status,
                         links=[],
-                        error=item.error,
+                        error=f"Extraction error: {parse_err}",
                     )
-                else:
-                    # Parse HTML links; catch any corrupt/unhandled parse failure per item
-                    try:
-                        links = extract_links(item.html or "", item.final_url)
-                        urls_ok += 1
-                        total_links += len(links)
-                        record = ExtractionResult(
-                            url=item.url,
-                            final_url=item.final_url,
-                            status=item.status,
-                            links=links,
-                            error=None,
-                        )
-                    except Exception as parse_err:
-                        urls_failed += 1
-                        record = ExtractionResult(
-                            url=item.url,
-                            final_url=item.final_url,
-                            status=item.status,
-                            links=[],
-                            error=f"Extraction error: {parse_err}",
-                        )
 
-                out_file.write(record.to_json() + "\n")
-                out_file.flush()
-            except Exception:
-                # Guarantee consumer loop never dies on unexpected record handling
-                urls_failed += 1
+            out_file.write(record.to_json() + "\n")
+            out_file.flush()
 
     return PipelineStats(
         urls_ok=urls_ok,
@@ -195,11 +194,12 @@ def run_pipeline(
     # Bounded queue between producer and consumer
     page_queue: queue.Queue = queue.Queue(maxsize=queue_size)
     stop_event = threading.Event()
+    producer_errors: list[Exception] = []
 
     # Start producer in a separate background thread
     producer_thread = threading.Thread(
         target=_producer_thread_target,
-        args=(url_stream, concurrency, timeout, retries, page_queue, stop_event),
+        args=(url_stream, concurrency, timeout, retries, page_queue, stop_event, producer_errors),
         name="ProducerCoordinator",
     )
     producer_thread.start()
@@ -207,7 +207,6 @@ def run_pipeline(
     try:
         # Consumer processes pages in the calling thread and returns statistics
         stats = _consumer_loop(output_path, page_queue)
-        return stats
     except Exception:
         stop_event.set()
         raise
@@ -215,3 +214,9 @@ def run_pipeline(
         stop_event.set()
         # Ensure producer thread is fully terminated before returning
         producer_thread.join()
+
+    # If the producer encountered a fatal error reading input, re-raise it in the calling thread
+    if producer_errors:
+        raise producer_errors[0]
+
+    return stats

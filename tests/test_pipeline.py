@@ -261,6 +261,45 @@ class TestPipelineIntegration(unittest.TestCase):
             self.assertIn("Extraction error", by_url[f"{self.base_url}/page1"]["error"] or "")
             self.assertIsNone(by_url[f"{self.base_url}/target"]["error"])
 
+    def test_non_utf8_input_file_handled_gracefully(self) -> None:
+        """Input files containing invalid UTF-8 bytes are read with replacement chars without crashing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = Path(tmpdir) / "invalid_utf8.txt"
+            output_file = Path(tmpdir) / "output.jsonl"
+
+            # Write invalid UTF-8 sequence (e.g. byte 0xFF) followed by valid URL
+            input_file.write_bytes(f"{self.base_url}/page1\n\xff\xfeinvalid\n".encode("latin-1"))
+
+            stats = run_pipeline(
+                input_path=str(input_file),
+                output_path=str(output_file),
+                concurrency=1,
+                timeout=5.0,
+                queue_size=2,
+            )
+
+            self.assertEqual(stats.urls_ok, 1)
+            self.assertEqual(stats.urls_failed, 1)
+
+    def test_consumer_write_error_propagates(self) -> None:
+        """A disk write error in the consumer loop propagates as an OSError."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_file = Path(tmpdir) / "input.txt"
+            output_file = Path(tmpdir) / "output.jsonl"
+            input_file.write_text(f"{self.base_url}/page1\n")
+
+            with patch("extractor.models.ExtractionResult.to_json", side_effect=OSError("Disk quota exceeded")):
+                with self.assertRaises(OSError):
+                    run_pipeline(
+                        input_path=str(input_file),
+                        output_path=str(output_file),
+                        concurrency=1,
+                        timeout=5.0,
+                        queue_size=1,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
