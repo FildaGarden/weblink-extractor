@@ -34,6 +34,7 @@ def fetch_page(
 ) -> FetchResult:
     """Fetch a single page and return its HTML or an informative error.
 
+
     Requirements addressed:
     - Every request has a configurable timeout.
     - Resolves final_url following redirects.
@@ -99,26 +100,23 @@ def fetch_page(
 
                 # Decompress if encoded (gzip/deflate)
                 raw_encoding = response.headers.get("Content-Encoding")
-                encoding = raw_encoding.strip().lower() if isinstance(raw_encoding, str) else ""
+                encoding = (
+                    raw_encoding.strip().lower()
+                    if isinstance(raw_encoding, str)
+                    else ""
+                )
 
-                if encoding in ("gzip", "deflate") or raw_bytes.startswith(b"\x1f\x8b"):
-                    try:
-                        raw_bytes = _decompress_body(raw_bytes, encoding)
-                    except Exception as decomp_err:
-                        return FetchResult(
-                            url=url,
-                            final_url=final_url,
-                            status=status,
-                            error=f"Decompression error: {decomp_err}",
-                        )
-                elif encoding not in ("", "identity"):
+                encoding = (
+                    (response.headers.get("Content-Encoding") or "").strip().lower()
+                )
+                if encoding not in ("", "identity", "gzip"):
                     return FetchResult(
                         url=url,
                         final_url=final_url,
                         status=status,
                         error=f"Unsupported Content-Encoding ({encoding})",
                     )
-
+                raw_bytes = _decompress_body(raw_bytes, encoding)
                 # Check maximum allowed size limit after decompression
                 if len(raw_bytes) > MAX_BODY_BYTES:
                     return FetchResult(

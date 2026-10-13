@@ -142,7 +142,7 @@ python -W error -m unittest discover tests -v
 
 ### Coverage (31 tests)
 - **`tests/test_parser.py` (7 tests)**: Relative link resolution, fragment stripping, protocol filtering (`mailto:`, `javascript:`), malformed hrefs, in-page duplicate removal, unclosed HTML tags, empty input.
-- **`tests/test_fetcher.py` (17 tests)**: 200 OK, transparent gzip decompression, transparent deflate decompression, decompression bomb safety size check, non-200 2xx status (e.g. 203), HTTP 404, HTTP 500, native & socket timeouts, connection/DNS failure, non-HTML MIME types, 10 MB size limit, retries on transient 5xx and connection resets during read, no retries on 4xx, no retries on permanent 501, no retries on DNS NXDOMAIN.
+- **`tests/test_fetcher.py` (17 tests)**: 200 OK, transparent gzip decompression, error handling for unsupported encodings (e.g. deflate), decompression bomb safety size check, non-200 2xx status (e.g. 203), HTTP 404, HTTP 500, native & socket timeouts, connection/DNS failure, non-HTML MIME types, 10 MB size limit, retries on transient 5xx and connection resets during read, no retries on 4xx, no retries on permanent 501, no retries on DNS NXDOMAIN.
 - **`tests/test_pipeline.py` (7 tests)**: End-to-end integration against a local loopback `http.server.HTTPServer` with redirects, 404s, binary content, invalid URLs, file overwrite behavior, summary stats, non-UTF8 input resilience, corrupt page isolation, consumer disk write error propagation, and consumer failure deadlock protection.
 
 ---

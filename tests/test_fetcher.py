@@ -19,6 +19,7 @@ class TestPageFetcher(unittest.TestCase):
         mock_response.status = 200
         mock_response.headers.get_content_type.return_value = "text/html"
         mock_response.headers.get_content_charset.return_value = "utf-8"
+        mock_response.headers.get.return_value = None
         mock_response.read.return_value = b"<html><body>Hello</body></html>"
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
@@ -53,41 +54,36 @@ class TestPageFetcher(unittest.TestCase):
         self.assertIsNone(result.error)
 
     @patch("urllib.request.urlopen")
-    def test_fetch_deflate_encoded_content(self, mock_urlopen: MagicMock) -> None:
-        """Deflate compressed HTML response is decompressed transparently."""
-        import zlib
-
-        compressed = zlib.compress(b"<html><body>Deflated Content</body></html>")
-
+    def test_fetch_unsupported_content_encoding(self, mock_urlopen: MagicMock) -> None:
+        """Unsupported content encoding (e.g. deflate/br) produces an error record."""
         mock_response = MagicMock()
-        mock_response.geturl.return_value = "https://example.com/deflate"
+        mock_response.geturl.return_value = "https://example.com/unsupported"
         mock_response.status = 200
         mock_response.headers.get_content_type.return_value = "text/html"
         mock_response.headers.get_content_charset.return_value = "utf-8"
         mock_response.headers.get.side_effect = lambda key, default=None: "deflate" if key == "Content-Encoding" else default
-        mock_response.read.return_value = compressed
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
-        result = fetch_page("https://example.com/deflate")
+        result = fetch_page("https://example.com/unsupported")
 
         self.assertEqual(result.status, 200)
-        self.assertEqual(result.html, "<html><body>Deflated Content</body></html>")
-        self.assertIsNone(result.error)
+        self.assertIsNone(result.html)
+        self.assertEqual(result.error, "Unsupported Content-Encoding (deflate)")
 
     @patch("urllib.request.urlopen")
     def test_fetch_decompression_bomb_blocked(self, mock_urlopen: MagicMock) -> None:
-        """Decompression bomb is caught by size check without exhausting memory."""
-        import zlib
+        """Gzip decompression bomb is caught by size check without exhausting memory."""
+        import gzip
 
         repetitive = b"A" * (10 * 1024 * 1024 + 100)
-        compressed = zlib.compress(repetitive)
+        compressed = gzip.compress(repetitive)
 
         mock_response = MagicMock()
         mock_response.geturl.return_value = "https://example.com/bomb"
         mock_response.status = 200
         mock_response.headers.get_content_type.return_value = "text/html"
         mock_response.headers.get_content_charset.return_value = "utf-8"
-        mock_response.headers.get.side_effect = lambda key, default=None: "deflate" if key == "Content-Encoding" else default
+        mock_response.headers.get.side_effect = lambda key, default=None: "gzip" if key == "Content-Encoding" else default
         mock_response.read.return_value = compressed
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
