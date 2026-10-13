@@ -114,7 +114,7 @@ Threads (`ThreadPoolExecutor` + `queue.Queue`) were chosen because:
 ### Retries Strategy
 - **Transient failures only**: Retries are restricted to status codes `500, 502, 503, 504`, socket timeouts, and socket connection resets.
 - **Never retried**: Client errors (`4xx`), permanent server errors (`501 Not Implemented`, `505`), DNS resolution errors (`gaierror`), SSL certificate verification errors, and invalid URL formats are never retried.
-- **Worst-case runtime**: Maximum execution time per URL under retries is bounded by `timeout * (retries + 1) + retry_delay * retries`.
+- **Worst-case runtime**: Nominal execution time per URL under retries is approximately bounded by `timeout * (retries + 1) + retry_delay * retries` (subject to per-socket timeout semantics as noted in Known Limitations).
 
 ---
 
@@ -135,10 +135,10 @@ Run the test suite offline with zero network access:
 python -W error -m unittest discover tests -v
 ```
 
-### Coverage (24 tests)
-- **`tests/test_parser.py`**: Relative link resolution, fragment stripping, protocol filtering (`mailto:`, `javascript:`), malformed hrefs, in-page duplicate removal, unclosed HTML tags.
-- **`tests/test_fetcher.py`**: 200 OK, HTTP 404, HTTP 500, timeouts, connection/DNS failure, non-HTML MIME types, gzip/deflate decompression, 10 MB size limit, retries on 5xx, no retries on 4xx, no retries on 501, no retries on DNS NXDOMAIN.
-- **`tests/test_pipeline.py`**: End-to-end integration against a local loopback `http.server.HTTPServer` with redirects, 404s, binary content, invalid URLs, file overwrite behavior, summary stats, corrupt page isolation, and consumer failure deadlock protection.
+### Coverage (30 tests)
+- **`tests/test_parser.py` (7 tests)**: Relative link resolution, fragment stripping, protocol filtering (`mailto:`, `javascript:`), malformed hrefs, in-page duplicate removal, unclosed HTML tags, empty input.
+- **`tests/test_fetcher.py` (16 tests)**: 200 OK, non-200 2xx status (e.g. 203), HTTP 404, HTTP 500, timeouts, connection/DNS failure, non-HTML MIME types, transparent gzip/deflate decompression, streaming decompression bomb protection, 10 MB size limit, retries on transient 5xx and connection resets during read, no retries on 4xx, no retries on permanent 501, no retries on DNS NXDOMAIN.
+- **`tests/test_pipeline.py` (7 tests)**: End-to-end integration against a local loopback `http.server.HTTPServer` with redirects, 404s, binary content, invalid URLs, file overwrite behavior, summary stats, non-UTF8 input resilience, corrupt page isolation, consumer disk write error propagation, and consumer failure deadlock protection.
 
 ---
 
